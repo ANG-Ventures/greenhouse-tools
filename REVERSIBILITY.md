@@ -96,3 +96,68 @@ python -m tools.cron_silent_audit.audit --all            # every enabled job
 ```
 Defaults: `--registry` = `$HERMES_HOME/cron/jobs.json` (fallback
 `~/.hermes/cron/jobs.json`); `--scripts-dir` = sibling `scripts/`.
+
+
+---
+
+# reaction_state — Reversibility & Operations
+
+**Status:** v0.1, PROTOTYPE of the durable-state core, **off by default.**
+
+## What it is
+A stdlib-only Python 3.11 tool that turns raw Discord reaction *transitions*
+into durable triage state in **its own SQLite DB**. It applies each add/remove
+event atomically and idempotently keyed on `(channel_id, message_id, emoji,
+user_id)` — with no dependence on whether the message was ever cached — and runs
+a one-time boot reconcile sweep against a **watermarked** authoritative snapshot
+to recover transitions missed while offline. Its transport-of-record is a local
+append-only journal `reactions.jsonl` (one JSON line per raw transition) that a
+future, non-stdlib gateway adapter would write.
+
+It does **not** open a Discord gateway connection. `discord.py` (which owns the
+raw `on_raw_reaction_add/remove` events) is non-stdlib; the live websocket client
+is out of scope and is the seam where a later phase attaches. This tool defines
+and tests that seam — it never opens a socket.
+
+## Reversibility
+
+This tool is reversible and bounded by construction.
+
+- **Off by default.** Nothing runs on import. No cron, daemon, launchd job, or
+  scheduler entry is shipped enabled. The nightly job is documented but
+  disabled; you enable it explicitly if you want it.
+- **State it touches:** exactly one file — the SQLite DB you name with `--db`.
+  No dotfiles, no global state, no network. The `--selfcheck` probe uses an
+  in-memory `:memory:` DB and touches no disk at all. Reconcile is **add-only by
+  default**: absence in a snapshot never deletes durable state, so a bad or
+  stale snapshot cannot destroy triage actions. Remove-on-absence is honored
+  only when BOTH the caller opts in AND the snapshot declares it enumerates the
+  full present-set; the nightly entry never opts in.
+- **Cannot mutate Discord or call out.** It imports stdlib only and imports no
+  networking, subprocess, websocket, or `discord` module. Tests assert both via
+  an AST walk. It can only read its journal and write its own DB.
+- **Uninstall = delete files.** To roll back completely:
+  1. Delete the durable-state DB: `rm -f <the --db path>`.
+  2. Remove the tool: `rm -f tools/reaction_state.py`.
+  3. Remove its tests: `rm -f tests/test_reaction_state.py`.
+  4. If you enabled the nightly job, remove that scheduler/cron entry.
+  Nothing else was touched. There is no migration to undo and no remote change
+  to revert, because the tool never made one.
+
+## Health & liveness probes (NOT the same thing)
+- **`--selfcheck`** — offline deploy health probe. Builds its OWN in-memory
+  fixture, exercises apply + reconcile, and asserts the durable invariants.
+  Touches NO real journal; runs in the network-isolated floor. Exit `0` iff the
+  core logic is internally correct. It says nothing about whether a real journal
+  exists. A garbage/unknown flag exits non-zero (real argv dispatch).
+- **`--check-target`** — real-journal liveness gate. Asserts the ACTUAL
+  `reactions.jsonl` exists, is a regular file, is non-empty, AND parses into
+  >=1 valid event; loud non-zero exit otherwise. The nightly entry runs THIS
+  first, so "read nothing" can never be a silent exit 0.
+
+## Usage
+```
+python -m tools.reaction_state --selfcheck                          # deploy probe
+python -m tools.reaction_state --check-target --journal reactions.jsonl  # nightly gate
+python -m tools.reaction_state --journal reactions.jsonl --db state.db    # replay
+```
