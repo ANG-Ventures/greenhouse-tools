@@ -79,7 +79,13 @@ class APIError(Exception):
 
 # --- REST transport (injectable for tests) ----------------------------------
 def _default_opener(req: urllib.request.Request, timeout: int = 20):
-    return urllib.request.urlopen(req, timeout=timeout)
+    # Hard-gate the scheme to https before opening: every request this adapter
+    # builds targets the constant Discord REST host, so a file:// or other custom
+    # scheme can only mean a malformed/poisoned URL. Refuse it loudly instead of
+    # letting urlopen honor an unexpected scheme (CWE-22).
+    if req.type != "https":
+        raise APIError(f"refusing non-https request scheme: {req.type!r}")
+    return urllib.request.urlopen(req, timeout=timeout)  # nosec B310 - scheme gated to https above
 
 
 def _token() -> str:
@@ -99,7 +105,7 @@ def api_get(path: str, params: dict | None = None, *, token: str | None = None,
     url = f"{API}{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
-    last = None
+    last: Exception | None = None
     for attempt in range(_retries):
         req = urllib.request.Request(url, headers={
             "Authorization": f"Bot {tok}",
