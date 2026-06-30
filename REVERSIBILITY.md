@@ -161,3 +161,66 @@ python -m tools.reaction_state --selfcheck                          # deploy pro
 python -m tools.reaction_state --check-target --journal reactions.jsonl  # nightly gate
 python -m tools.reaction_state --journal reactions.jsonl --db state.db    # replay
 ```
+
+
+---
+
+# restore-canary -- Reversibility & Operations
+
+**Status:** RESPEC v4, off by default, read-mostly drill.
+
+## What it is
+A nightly restore-drill for an encrypted `restic` home-lab backup. It decrypts +
+restores ONE known sentinel file from the latest matching snapshot, hashes it
+against a recorded sha256, and emits a secret-free PASS/FAIL artifact -- proving
+backups are *restorable*, not merely consistent. The committed module ships only
+pure logic + restic/`op` command builders and parsers; the live `--run` path is
+host-only. Tests and both health probes exercise the builders/parsers over
+self-built fixtures and never touch the network.
+
+## Reversibility
+
+This tool is reversible by construction and **off by default.**
+
+- **Off by default.** Nothing runs on import. No cron, launchd, daemon, or
+  scheduler entry is shipped enabled. The nightly job and the off-host heartbeat
+  monitor are documented but disabled; you enable them explicitly.
+- **Restore is to a throwaway target.** The live `--run` restores the single
+  canary file into a fresh temp `--target` dir, hashes it, then the operator
+  discards that dir. It never restores over live data, never writes into the
+  backup repo, and never runs restic forget/prune (no destructive restic verbs
+  are built anywhere in this module).
+- **No state outside its own artifact.** The only durable write is the PASS/FAIL
+  artifact JSON at the path you choose. No DB, no cache, no cross-run store.
+- **Secrets stay scoped (B-3).** OP_SERVICE_ACCOUNT_TOKEN is delivered ONLY to
+  the scoped `op` subprocess env -- never to restic's env, never to argv, never to
+  the artifact, log, stdout/stderr, exception, or heartbeat. A scrub pass strips
+  any known secret value before any string is emitted. Tests assert all of this.
+- **Uninstall = delete files.** To roll back completely:
+  1. Delete any artifact JSON you generated.
+  2. `rm -rf tools/restore_canary/`.
+  3. If you enabled the nightly cron or the off-host heartbeat monitor, remove
+     those entries.
+  Nothing else was touched; there is no migration to undo and no remote change to
+  revert, because the tool never made one.
+
+## Health & liveness probes (NOT the same thing)
+- **`--selfcheck`** -- offline deploy health probe. Builds its OWN fixture
+  (config + captured-shape snapshots --json + a real temp canary file), verifies
+  B-1/B-1r/B-3/R-3/R-4 invariants, and exits 0 iff the core logic is internally
+  correct. Touches NO real source; runs in the network-isolated floor. A
+  garbage/unknown flag exits non-zero (real argv dispatch).
+- **`--check-target` / `--check-vault`** -- real-source liveness gate. Asserts the
+  ACTUAL config file exists, is a regular non-empty file, validates, the required
+  secret env (OP_SERVICE_ACCOUNT_TOKEN) is present, and the repo mount_type is
+  durable (R-5). Loud non-zero otherwise. The nightly entry runs THIS first, so
+  "read nothing" can never be a silent exit 0.
+- **`--audit-artifact <f>`** -- on-host artifact-integrity check (B-2, demoted):
+  flags a stale / FAIL / unparseable artifact WHILE the host is up. It explicitly
+  does NOT cover host-down -- that is the off-host PUSH heartbeat's job.
+
+## Usage
+
+    python -m tools.restore_canary.canary --selfcheck                          # deploy probe
+    python -m tools.restore_canary.canary --check-target --config canary.json  # nightly gate
+    python -m tools.restore_canary.canary --audit-artifact last-run.json       # on-host integrity
