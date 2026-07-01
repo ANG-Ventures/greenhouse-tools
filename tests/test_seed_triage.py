@@ -383,18 +383,212 @@ def test_report_maps_message_to_seed(capsys):
     assert res["rows"][0]["emoji"] == "✅"
 
 
-def test_report_row_has_no_fabricated_since(capsys):
+def test_since_is_real_or_blank_never_reconcile(capsys):
+    # SUPERSEDES test_report_row_has_no_fabricated_since (v0.2b): the guarantee
+    # shifts from "no since column" to "since is real-or-blank, never the core's
+    # 'reconcile' placeholder". A DB-only verdict (no journal evidence) → blank age.
     c = _conn()
     rs.apply_event(c, {"channel_id": CH, "message_id": M1, "emoji": "✅",
                        "user_id": ACE, "action": "add", "seq": 1})
-    st.report(c, _seed_maps_one(), {}, ACE, 14)
+    res = st.report(c, _seed_maps_one(), {}, ACE, 14, journal_path=None)
     out = capsys.readouterr().out
-    assert "reconcile" not in out  # the core's hardcoded ts must never surface
+    assert "reconcile" not in out          # the core's hardcoded ts NEVER surfaces
+    assert res["rows"][0]["since"] is None  # no journal evidence → real-or-blank
 
 
 def test_report_prints_configured_ace_id(capsys):
     st.report(_conn(), {}, {}, ACE, 14)
     assert ACE in capsys.readouterr().out
+
+
+# === v0.2b — journal-derived "since" (first-seen verdict age) ================
+def _jrnl(tmp_path, *evs):
+    p = tmp_path / "reactions.jsonl"
+    p.write_text("\n".join(json.dumps(e) for e in evs) + "\n", encoding="utf-8")
+    return str(p)
+
+
+def _add(seq, ts, emoji="✅", msg=M1, user=ACE, ch=CH, action="add"):
+    return {"channel_id": ch, "message_id": msg, "emoji": emoji,
+            "user_id": user, "action": action, "seq": seq, "ts": ts}
+
+
+# --- Phase 1: first_seen_map pure helper ---
+def test_first_seen_simple_add():
+    m = st.first_seen_map([_add(1, "2026-06-20T10:00:00Z")])
+    assert m[(CH, M1, "✅", ACE)] == "2026-06-20T10:00:00Z"
+
+
+def test_first_seen_first_of_multiple_adds():
+    # two adds, no remove → the EARLIER opening ts wins (streak opened at seq 1)
+    m = st.first_seen_map([_add(1, "2026-06-20T10:00:00Z"), _add(2, "2026-06-22T10:00:00Z")])
+    assert m[(CH, M1, "✅", ACE)] == "2026-06-20T10:00:00Z"
+
+
+def test_since_first_seen_resets_on_remove():
+    # add@t1 → remove@t2 → add@t3  =>  since = t3 (the current streak's open), INV-3
+    m = st.first_seen_map([
+        _add(1, "2026-06-20T10:00:00Z"),
+        _add(2, "2026-06-25T10:00:00Z", action="remove"),
+        _add(3, "2026-06-29T10:00:00Z"),
+    ])
+    assert m[(CH, M1, "✅", ACE)] == "2026-06-29T10:00:00Z"
+
+
+def test_since_absent_key_has_none():
+    # add then remove, no re-add → key is NOT present → not in map
+    m = st.first_seen_map([
+        _add(1, "2026-06-20T10:00:00Z"),
+        _add(2, "2026-06-25T10:00:00Z", action="remove"),
+    ])
+    assert (CH, M1, "✅", ACE) not in m
+
+
+def test_first_seen_orders_by_seq_not_file_position():
+    # events supplied OUT of seq order (rotated/concatenated journal) → the helper
+    # sorts by seq, so the streak still opens at seq 1's ts, not the first-in-list.
+    m = st.first_seen_map([
+        _add(3, "2026-06-29T10:00:00Z"),
+        _add(1, "2026-06-20T10:00:00Z"),
+        _add(2, "2026-06-25T10:00:00Z", action="remove"),
+    ])
+    # ordered: add@1 → remove@2 → add@3  =>  since = t3
+    assert m[(CH, M1, "✅", ACE)] == "2026-06-29T10:00:00Z"
+
+
+def test_first_seen_skips_ts_missing():
+    # a valid add with NO ts (legal per core schema) → no evidence, key absent (B2)
+    ev = {"channel_id": CH, "message_id": M1, "emoji": "✅", "user_id": ACE,
+          "action": "add", "seq": 1}  # note: no "ts"
+    m = st.first_seen_map([ev])
+    assert (CH, M1, "✅", ACE) not in m
+
+
+def test_first_seen_str_coerces_int_ids():
+    # a future line with int ids must still match current_present's TEXT tuples
+    ev = {"channel_id": 111, "message_id": 222, "emoji": "✅", "user_id": 333,
+          "action": "add", "seq": 1, "ts": "2026-06-20T10:00:00Z"}
+    m = st.first_seen_map([ev])
+    assert ("111", "222", "✅", "333") in m
+
+
+# --- Phase 2/3: report threading + render + json + degrade ---
+def test_report_attaches_since_for_verdict(tmp_path, capsys):
+    c = _conn()
+    rs.apply_event(c, {"channel_id": CH, "message_id": M1, "emoji": "✅",
+                       "user_id": ACE, "action": "add", "seq": 1})
+    j = _jrnl(tmp_path, _add(1, "2026-06-20T10:00:00Z"))
+    res = st.report(c, _seed_maps_one(), {}, ACE, 14, journal_path=j)
+    assert res["rows"][0]["since"] == "2026-06-20T10:00:00Z"
+
+
+def test_since_matches_the_verdict_emoji_not_another(tmp_path):
+    # Ace pressed ✅@t1 AND 👍@t2; verdict is ✅ (precedence) → since must be t1.
+    c = _conn()
+    for e, sq in (("✅", 1), ("👍", 2)):
+        rs.apply_event(c, {"channel_id": CH, "message_id": M1, "emoji": e,
+                           "user_id": ACE, "action": "add", "seq": sq})
+    j = _jrnl(tmp_path,
+              _add(1, "2026-06-20T10:00:00Z", emoji="✅"),
+              _add(2, "2026-06-25T10:00:00Z", emoji="👍"))
+    res = st.report(c, _seed_maps_one(), {}, ACE, 14, journal_path=j)
+    row = res["rows"][0]
+    assert row["emoji"] == "✅" and row["since"] == "2026-06-20T10:00:00Z"
+
+
+def test_report_no_journal_path_is_inert(tmp_path, capsys):
+    # journal_path=None → text has no age; json since is uniformly None (D-8).
+    c = _conn()
+    rs.apply_event(c, {"channel_id": CH, "message_id": M1, "emoji": "✅",
+                       "user_id": ACE, "action": "add", "seq": 1})
+    res = st.report(c, _seed_maps_one(), {}, ACE, 14, journal_path=None)
+    out = capsys.readouterr().out
+    assert res["rows"][0]["since"] is None
+    assert "ago" not in out and "just now" not in out  # no age rendered
+
+
+def test_report_since_missing_journal_is_blank_not_crash(tmp_path, capsys):
+    c = _conn()
+    rs.apply_event(c, {"channel_id": CH, "message_id": M1, "emoji": "✅",
+                       "user_id": ACE, "action": "add", "seq": 1})
+    res = st.report(c, _seed_maps_one(), {}, ACE, 14,
+                    journal_path=str(tmp_path / "nope.jsonl"))
+    # verdict still printed, age blank, no crash
+    assert res["rows"][0]["verdict"].startswith("✅")
+    assert res["rows"][0]["since"] is None
+
+
+def test_report_corrupt_journal_degrades_all_blank(tmp_path, capsys):
+    # a garbage line makes the core's all-or-nothing read_journal RAISE → caught →
+    # ALL ages blank, every verdict still printed (D-7a / INV-4). NOT per-line salvage.
+    c = _conn()
+    rs.apply_event(c, {"channel_id": CH, "message_id": M1, "emoji": "✅",
+                       "user_id": ACE, "action": "add", "seq": 1})
+    p = tmp_path / "reactions.jsonl"
+    p.write_text(json.dumps(_add(1, "2026-06-20T10:00:00Z")) + "\n{garbage}\n",
+                 encoding="utf-8")
+    res = st.report(c, _seed_maps_one(), {}, ACE, 14, journal_path=str(p))
+    assert res["rows"][0]["verdict"].startswith("✅")
+    assert res["rows"][0]["since"] is None  # all blank, not the salvageable first line
+
+
+def test_report_json_since_is_raw_iso(tmp_path, capsys):
+    c = _conn()
+    rs.apply_event(c, {"channel_id": CH, "message_id": M1, "emoji": "✅",
+                       "user_id": ACE, "action": "add", "seq": 1})
+    j = _jrnl(tmp_path, _add(1, "2026-06-20T10:00:00Z"))
+    st.report(c, _seed_maps_one(), {}, ACE, 14, as_json=True, journal_path=j)
+    parsed = json.loads(capsys.readouterr().out)
+    assert parsed["rows"][0]["since"] == "2026-06-20T10:00:00Z"  # raw ISO, not rendered age
+
+
+def test_report_json_since_null_when_no_evidence(tmp_path, capsys):
+    c = _conn()
+    rs.apply_event(c, {"channel_id": CH, "message_id": M1, "emoji": "✅",
+                       "user_id": ACE, "action": "add", "seq": 1})
+    st.report(c, _seed_maps_one(), {}, ACE, 14, as_json=True, journal_path=None)
+    parsed = json.loads(capsys.readouterr().out)
+    assert "since" in parsed["rows"][0] and parsed["rows"][0]["since"] is None  # key always present
+
+
+def test_relative_age_buckets():
+    import datetime
+    now = datetime.datetime(2026, 7, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
+    def at(s):  # ts s seconds before now
+        return (now - datetime.timedelta(seconds=s)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert st._relative_age(at(30), now) == "just now"
+    assert st._relative_age(at(90 * 60), now) == "1h ago"
+    assert st._relative_age(at(50 * 3600), now) == "2d ago"
+    # future ts (clock skew) clamps to just now
+    future = (now + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert st._relative_age(future, now) == "just now"
+    assert st._relative_age(None, now) == ""
+
+
+def test_report_since_end_to_end(tmp_path, capsys):
+    # two seeds: one ✅'d long ago, one 👍'd recently → distinct rendered ages + raw ISO.
+    import datetime, time as _t
+    now = datetime.datetime.now(datetime.timezone.utc)
+    old = (now - datetime.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    recent = (now - datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    M2 = "M2"
+    c = _conn()
+    rs.apply_event(c, {"channel_id": CH, "message_id": M1, "emoji": "✅",
+                       "user_id": ACE, "action": "add", "seq": 1})
+    rs.apply_event(c, {"channel_id": CH, "message_id": M2, "emoji": "👍",
+                       "user_id": ACE, "action": "add", "seq": 2})
+    smaps = {
+        M1: {"channel_id": CH, "seed_id": "gh-A", "run_dir": "d", "mtime": _t.time()},
+        M2: {"channel_id": CH, "seed_id": "gh-B", "run_dir": "d", "mtime": _t.time()},
+    }
+    j = _jrnl(tmp_path,
+              _add(1, old, emoji="✅", msg=M1),
+              _add(2, recent, emoji="👍", msg=M2))
+    res = st.report(c, smaps, {}, ACE, 14, journal_path=j)
+    out = capsys.readouterr().out
+    by_id = {r["seed_id"]: r for r in res["rows"]}
+    assert by_id["gh-A"]["since"] == old and by_id["gh-B"]["since"] == recent
+    assert "3d ago" in out and "2h ago" in out
 
 
 def test_report_seed_with_no_reaction_shows_none():
