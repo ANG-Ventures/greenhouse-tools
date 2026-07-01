@@ -224,3 +224,77 @@ This tool is reversible by construction and **off by default.**
     python -m tools.restore_canary.canary --selfcheck                          # deploy probe
     python -m tools.restore_canary.canary --check-target --config canary.json  # nightly gate
     python -m tools.restore_canary.canary --audit-artifact last-run.json       # on-host integrity
+
+
+---
+
+# alias_expand — Reversibility & Operations
+
+**Status:** v0.1, PURE text->text expander, propose-only, **off by default.**
+
+## What it is
+A stdlib-only Python 3.11 tool that borrows the HA/hassil alternation grammar
+(`( | )` alternation, `[ ]` optional) into HACR capability aliases. It reads a
+curated `capabilities/*.yaml` alias list, expands any alias containing grammar
+tokens into the FULL deterministic cross-product of plain literal strings, and
+emits the expanded list. This lets an author write ONE phrase —
+`turn (off|out) [the] lights` — instead of hand-maintaining the 6-9
+near-duplicate literals the router's `_match_capability` needs today.
+
+It is a text-in / text-out fan-out. It NEVER routes, NEVER actuates, NEVER edits
+the safety policy. The router matcher is unchanged — it still sees flat literal
+aliases and runs its existing normalize + substring-contains logic. The safety
+layer (camera-floodlight exclusion, confirmation gating, room remap, the
+curated-YAML allowlist) is NOT touched. This tool does NOT migrate device control
+to HA Assist and must never be read as doing so.
+
+## Reversibility
+
+This tool is reversible by construction.
+
+- **Off by default.** Nothing runs on import. No cron, daemon, launchd job, or
+  scheduler entry is shipped enabled. The nightly job is documented but disabled;
+  you enable it explicitly if you want it.
+- **State it touches: NONE.** The expander is a pure function; the CLI reads the
+  capabilities YAML for reading only and prints the expanded aliases to stdout.
+  It writes no file, no DB, no cache, no dotfiles, no temp state. It does not
+  edit the capability files it reads — expansion output is emitted to stdout for
+  a human to review and paste, or not.
+- **Cannot mutate anything or call out.** It imports stdlib only (no PyYAML, no
+  hassil, no `requests`) and imports no networking, subprocess, or HA/websocket
+  module. A test asserts this via an AST walk. It cannot touch the router, the
+  safety policy, or any remote endpoint.
+- **Reversible by identity.** The output is exactly the literal alias strings a
+  human would otherwise have typed; adopting an expansion is a no-op change to
+  the matcher's behavior. To un-adopt, revert the capability YAML edit you made
+  by hand — there is nothing else to undo.
+- **Uninstall = delete files.** To roll back completely:
+  1. Remove the tool: `rm -f tools/alias_expand.py`.
+  2. Remove its tests: `rm -f tests/test_alias_expand.py`.
+  3. If you enabled the nightly job, remove that scheduler/cron entry.
+  Nothing else was touched. There is no migration to undo and no remote change to
+  revert, because the tool never made one.
+
+## Health & liveness probes (NOT the same thing)
+- **`--selfcheck`** — offline logic probe. Builds its OWN in-memory
+  `(pattern -> expected expansion)` fixtures, asserts the expander produces the
+  exact deterministic cross-product, that determinism holds within the run, and
+  that a no-token literal passes through byte-identical. Touches NO real repo,
+  path, or the `ha-command-router` checkout; runs in the network-isolated floor.
+  Exit `0` iff the logic is internally correct. It is NOT a liveness signal —
+  a green `--selfcheck` says nothing about whether the real capabilities dir
+  exists. A garbage/unknown flag exits non-zero (real argv dispatch).
+- **`--check-target`** — real-source liveness gate. Asserts the ACTUAL
+  `--capabilities-dir` exists, is a directory, contains >=1 capability `*.yaml`
+  (excluding `policy.yaml`/`groups.yaml`/`llm_providers.yaml`), AND that at least
+  one capability carries a non-empty `aliases` list — i.e. there is real input to
+  expand. Each failure emits one alert-worthy stderr line prefixed
+  `ALIAS_EXPAND_LIVENESS_FAIL:` and exits non-zero. The nightly entry runs THIS
+  first, so an empty / renamed / unmounted capabilities dir screams instead of
+  silently exiting 0.
+
+## Usage
+
+    python -m tools.alias_expand --selfcheck                                        # deploy probe
+    python -m tools.alias_expand --check-target --capabilities-dir /path/to/capabilities  # nightly gate
+    python -m tools.alias_expand --capabilities-dir /path/to/capabilities           # emit expanded aliases
