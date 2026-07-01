@@ -374,6 +374,79 @@ def poll(db_path, seed_maps, ace_user_id, window_days, *, token=None,
 
 
 # --- report (read-model; NO fabricated "since" — D-11) ----------------------
+def first_seen_map(events):
+    """{(channel, message, emoji, user): iso_ts} → for each key, the ts of the add
+    that opened its CURRENTLY-present streak (first-seen, removal-reset, INV-3).
+
+    Walks events ordered by `seq` (NOT file position — a concatenated/rotated
+    journal must not mis-order a streak). For each key: an `add` sets the streak's
+    opening ts iff currently unset; a `remove` drops it. Returns only keys still
+    "open" (present) at the end. The streak-opening ts means "since this reaction
+    has been *continuously* present" — an 8-day-old ✅ briefly un-reacted and
+    re-added yesterday is honestly 1 day old as a standing approval.
+
+    A `ts` is OPTIONAL in the core journal schema (validate_event does not require
+    it); an event with a missing/empty `ts` is treated as no evidence and SKIPPED
+    (never recorded as ""), so "since" is real-or-absent, never fabricated (INV-2).
+    Key fields are str()-coerced exactly like the core's _key() so they match
+    current_present()'s TEXT tuples. Derived from the journal only — the core /
+    DB are never consulted for a timestamp.
+    """
+    cur: dict[tuple[str, str, str, str], str] = {}
+    for ev in sorted(events, key=lambda e: e.get("seq", 0)):
+        key = (str(ev["channel_id"]), str(ev["message_id"]),
+               str(ev["emoji"]), str(ev["user_id"]))
+        if ev.get("action") == "add":
+            ts = ev.get("ts")
+            if ts and key not in cur:  # falsy/missing ts = no evidence; skip
+                cur[key] = str(ts)
+        elif ev.get("action") == "remove":
+            cur.pop(key, None)
+    return cur
+
+
+def load_first_seen_map(journal_path):
+    """Load the journal via the core's read_journal() and build first_seen_map.
+    WHOLE-FILE degrade (D-7a): read_journal is all-or-nothing (raises on the first
+    bad line), so a missing/corrupt journal → empty map → every "since" blank, with
+    the report's verdicts (from the DB) intact. NEVER raises (INV-4)."""
+    if not journal_path:
+        return {}
+    try:
+        events = rs.read_journal(journal_path)
+    except (OSError, ValueError):
+        return {}
+    return first_seen_map(events)
+
+
+def _relative_age(since_iso, now=None):
+    """Coarse, stdlib-only, UTC-safe relative age: 'just now' / 'Nm ago' /
+    'Nh ago' / 'Nd ago'. A future ts (clock skew) clamps to 'just now'. Returns ''
+    for a falsy since."""
+    import datetime
+    if not since_iso:
+        return ""
+    try:
+        # Z → +00:00 so fromisoformat yields a UTC-aware datetime (no naive/aware
+        # subtraction throw).
+        dt = datetime.datetime.fromisoformat(str(since_iso).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+    except (ValueError, TypeError):
+        return ""
+    cur = now or datetime.datetime.now(datetime.timezone.utc)
+    secs = (cur - dt).total_seconds()
+    if secs < 60:
+        return "just now"
+    mins = int(secs // 60)
+    if mins < 60:
+        return f"{mins}m ago"
+    hours = mins // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"
+
+
 def _verdict_for_message(conn, channel_id, message_id, ace_user_id):
     """The single highest-precedence emoji Ace has DURABLY present on a message,
     or None. Precedence ❌>✅>👍 (D-7) matters only when >1 is present at once."""
@@ -387,12 +460,17 @@ def _verdict_for_message(conn, channel_id, message_id, ace_user_id):
 
 
 def report(conn, seed_maps, seed_titles, ace_user_id, window_days, *,
-           as_json=False):
+           as_json=False, journal_path=None):
     """Join durable present keys ⨯ ALL seed maps ⨯ precedence → per-seed verdict.
-    Row = seed_id · title · verdict (NO "since" — the core's reconcile path has no
-    real timestamp, D-11). Also surfaces un-triaged cards aged past the capture
-    horizon (D-12). Returns a dict (and renders text when not as_json)."""
+    Row = seed_id · title · verdict [· since]. "since" is the journal-derived
+    first-seen of the verdict emoji's current presence streak (v0.2b, D-1..D-8) —
+    REAL or blank, NEVER fabricated (INV-2), and NEVER from the core's reconcile
+    `ts="reconcile"`. With journal_path=None the feature is inert: text unchanged,
+    `--json` carries a uniform `since: null` (D-8 stable schema). Also surfaces
+    un-triaged cards aged past the capture horizon (D-12)."""
     import time
+    since = load_first_seen_map(journal_path)  # {} when path None/missing/corrupt
+    ace = str(ace_user_id)
     rows = []
     for mid, m in sorted(seed_maps.items(), key=lambda kv: kv[1]["seed_id"]):
         v = _verdict_for_message(conn, m["channel_id"], mid, ace_user_id)
@@ -400,18 +478,20 @@ def report(conn, seed_maps, seed_titles, ace_user_id, window_days, *,
             continue
         rows.append({"seed_id": m["seed_id"],
                      "title": seed_titles.get(m["seed_id"], ""),
-                     "verdict": _VERDICT_LABEL[v], "emoji": v})
+                     "verdict": _VERDICT_LABEL[v], "emoji": v,
+                     "since": since.get((str(m["channel_id"]), str(mid), v, ace))})
 
     # Durable present keys whose message is in NO seed map → unknown-seed (D-9),
     # never dropped.
     mapped_msgs = set(seed_maps.keys())
     for (ck, mk, e, u) in sorted(rs.current_present(conn)):
-        if u != str(ace_user_id) or e not in _PRECEDENCE:
+        if u != ace or e not in _PRECEDENCE:
             continue
         if mk in mapped_msgs:
             continue
         rows.append({"seed_id": "unknown-seed", "title": f"(message {mk})",
-                     "verdict": _VERDICT_LABEL[e], "emoji": e})
+                     "verdict": _VERDICT_LABEL[e], "emoji": e,
+                     "since": since.get((str(ck), str(mk), e, ace))})
 
     # Aged-out un-triaged cards: a seed map older than the window with no durable
     # verdict (D-12) — surfaced, never a silent miss.
@@ -423,7 +503,7 @@ def report(conn, seed_maps, seed_titles, ace_user_id, window_days, *,
             aged_out.append(m["seed_id"])
 
     result = {
-        "ace_user_id": str(ace_user_id),
+        "ace_user_id": ace,
         "rows": sorted(rows, key=lambda r: r["seed_id"]),
         "aged_out_untriaged": sorted(set(aged_out)),
     }
@@ -436,7 +516,9 @@ def report(conn, seed_maps, seed_titles, ace_user_id, window_days, *,
         print("  (no durable verdicts yet)")
     for r in result["rows"]:
         title = (r["title"][:60]) if r["title"] else ""
-        print(f"  {r['seed_id']:<22} {r['verdict']:<16} {title}")
+        age = _relative_age(r.get("since"))
+        age_col = f"  ({age})" if age else ""
+        print(f"  {r['seed_id']:<22} {r['verdict']:<16} {title}{age_col}")
     if result["aged_out_untriaged"]:
         n = len(result["aged_out_untriaged"])
         print(f"  ⚠️ {n} un-triaged card(s) aged out of the {window_days}-day "
@@ -595,6 +677,11 @@ def main(argv: list[str] | None = None) -> int:
     pp.add_argument("--message", help="ad-hoc narrow poll of CHANNEL/MESSAGE (add-only)")
     rp = sub.add_parser("report", help="print the durable per-seed verdict table")
     add_shared(rp, suppress=True)
+    rp.add_argument("--journal", default=os.environ.get(
+        "DISCORD_REACTION_JOURNAL",
+        str(Path.home() / ".hermes" / "greenhouse" / "reactions.jsonl")),
+        help="path to the gateway reaction journal for verdict-age ('since'); "
+             "missing/corrupt → ages blank (default-safe)")
     args = p.parse_args(argv)
 
     if args.selfcheck:
@@ -642,7 +729,7 @@ def main(argv: list[str] | None = None) -> int:
             seed_maps = load_seed_maps(args.seeds_dir)
             titles = load_seed_titles(args.seeds_dir)
             report(conn, seed_maps, titles, args.ace_user_id, args.window_days,
-                   as_json=args.json)
+                   as_json=args.json, journal_path=args.journal)
         finally:
             conn.close()
         return 0
