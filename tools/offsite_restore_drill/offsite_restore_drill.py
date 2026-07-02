@@ -81,10 +81,14 @@ def remote_join(remote: str, *parts: str) -> str:
 
 def resolve_rclone(explicit: Optional[str], environ: Optional[Dict[str, str]] = None) -> Optional[str]:
     env = environ if environ is not None else os.environ
-    candidates = [explicit, env.get("RCLONE_BIN"), shutil.which("rclone")]
+    candidates = [explicit, env.get("RCLONE_BIN"), shutil.which("rclone", path=env.get("PATH"))]
     for candidate in candidates:
         if not candidate:
             continue
+        if os.sep not in candidate:
+            found = shutil.which(candidate, path=env.get("PATH"))
+            if found:
+                return str(pathlib.Path(found).resolve())
         path = pathlib.Path(candidate).expanduser()
         if path.exists() and os.access(path, os.X_OK):
             return str(path.resolve())
@@ -154,25 +158,23 @@ def discover_latest_target(rclone_bin: str, remote: str, min_tar_bytes: int, tim
     if not dates:
         raise DrillError(f"LOUD: no dated offsite backup directories found on {remote}")
 
-    date = dates[0]
-    dir_remote = remote_join(remote, date)
-    lsf = run_command([rclone_bin, "lsf", dir_remote, "--files-only"], timeout)
-    tars = parse_lsf_tars(require_ok(lsf, f"rclone lsf {dir_remote}"))
-    if not tars:
-        raise DrillError(
-            f"LOUD: newest dated offsite backup directory has no "
-            f"hermes-fleet-encrypted-YYYY-MM-DD.tar: {dir_remote}"
-        )
-    name = tars[-1]
-    remote_path = remote_join(remote, date, name)
-    size_proc = run_command([rclone_bin, "size", remote_path, "--json"], timeout)
-    size = parse_rclone_size(require_ok(size_proc, f"rclone size {remote_path}"))
-    if size < min_tar_bytes:
-        raise DrillError(
-            f"LOUD: latest offsite tar is truncated/empty: {remote_path} has {size} bytes "
-            f"(< {min_tar_bytes})"
-        )
-    return TargetInfo(remote=remote, date=date, name=name, remote_path=remote_path, size=size)
+    for date in dates:
+        dir_remote = remote_join(remote, date)
+        lsf = run_command([rclone_bin, "lsf", dir_remote, "--files-only"], timeout)
+        tars = parse_lsf_tars(require_ok(lsf, f"rclone lsf {dir_remote}"))
+        if not tars:
+            continue
+        name = tars[0]
+        remote_path = remote_join(remote, date, name)
+        size_proc = run_command([rclone_bin, "size", remote_path, "--json"], timeout)
+        size = parse_rclone_size(require_ok(size_proc, f"rclone size {remote_path}"))
+        if size < min_tar_bytes:
+            raise DrillError(
+                f"LOUD: latest offsite tar is truncated/empty: {remote_path} has {size} bytes "
+                f"(< {min_tar_bytes})"
+            )
+        return TargetInfo(remote=remote, date=date, name=name, remote_path=remote_path, size=size)
+    raise DrillError(f"LOUD: no offsite tar found under dated directories on {remote}")
 
 
 def check_target(cfg: RunConfig) -> TargetInfo:
@@ -183,10 +185,21 @@ def check_target(cfg: RunConfig) -> TargetInfo:
 
 
 def pull_latest_offsite(cfg: RunConfig, target: TargetInfo, pull_dir: pathlib.Path) -> pathlib.Path:
+    pull_dir.mkdir(parents=True, exist_ok=True)
+    if target.remote_path.startswith("file://"):
+        source = pathlib.Path(target.remote_path.removeprefix("file://"))
+        if not source.is_file():
+            raise DrillError(f"LOUD: local fixture tar missing: {source}")
+        tar_path = pull_dir / target.name
+        shutil.copyfile(source, tar_path)
+        size = tar_path.stat().st_size
+        if size != target.size:
+            raise DrillError(f"LOUD: pulled tar size mismatch for {tar_path}: got {size}, expected {target.size}")
+        return tar_path
+
     rclone = resolve_rclone(cfg.rclone_bin)
     if not rclone:
         raise DrillError("LOUD: rclone not resolvable before pull")
-    pull_dir.mkdir(parents=True, exist_ok=True)
     proc = run_command([rclone, "copy", target.remote_path, str(pull_dir)], cfg.timeout_seconds)
     require_ok(proc, f"rclone copy {target.remote_path}")
     tar_path = pull_dir / target.name
@@ -382,13 +395,15 @@ def selfcheck() -> None:
             min_tar_bytes=1,
             timeout_seconds=30,
         )
-        extract_root = cfg.scratch_root / "extract"
-        safe_extract_tar(tar_path, extract_root)
-        assert_extracted_tree(extract_root, cfg.agent)
-        inner = invoke_restore_drill(cfg, extract_root)
-        fake_target = TargetInfo(cfg.remote, "2026-07-01", tar_path.name, "selfcheck-local-fixture:/2026-07-01/" + tar_path.name, tar_path.stat().st_size)
-        proof_path, _ = write_success_proof(cfg, fake_target, tar_path, inner)
-        proof = json.loads(proof_path.read_text(encoding="utf-8"))
+        fake_target = TargetInfo(
+            cfg.remote,
+            "2026-07-01",
+            tar_path.name,
+            "file://" + str(tar_path),
+            tar_path.stat().st_size,
+        )
+        result = run_with_target(cfg, fake_target)
+        proof = json.loads(result.proof_path.read_text(encoding="utf-8"))
         if proof.get("source") != "offsite2" or not proof.get("inner_drill_ok"):
             raise DrillError("selfcheck proof did not contain expected offsite2 inner drill proof")
 

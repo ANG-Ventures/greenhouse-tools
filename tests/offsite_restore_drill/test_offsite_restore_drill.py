@@ -27,7 +27,9 @@ from tools.offsite_restore_drill.offsite_restore_drill import (
     parse_lsd_dates,
     parse_lsf_tars,
     remote_join,
+    resolve_rclone,
     run,
+    run_with_target,
     safe_extract_tar,
 )
 
@@ -44,8 +46,13 @@ def write_fake_rclone(tmp_path: pathlib.Path) -> pathlib.Path:
         "if not args:\n"
         "    sys.exit(2)\n"
         "cmd = args[0]\n"
-        "date = os.environ.get('FAKE_RCLONE_DATE', '2026-07-01')\n"
-        "tar_name = os.environ.get('FAKE_RCLONE_TAR_NAME', f'hermes-fleet-encrypted-{date}.tar')\n"
+        "dates = [d for d in os.environ.get('FAKE_RCLONE_DATES', '2026-06-01,2026-07-01').split(',') if d]\n"
+        "tar_dates = set(d for d in os.environ.get('FAKE_RCLONE_TAR_DATES', dates[-1] if dates else '').split(',') if d)\n"
+        "def selected_date(remote_path):\n"
+        "    for value in dates:\n"
+        "        if '/' + value in remote_path or remote_path.endswith(value):\n"
+        "            return value\n"
+        "    return dates[-1] if dates else '2026-07-01'\n"
         "if cmd == 'lsd':\n"
         "    mode = os.environ.get('FAKE_RCLONE_MODE', 'ok')\n"
         "    if mode == 'unreachable':\n"
@@ -53,15 +60,15 @@ def write_fake_rclone(tmp_path: pathlib.Path) -> pathlib.Path:
         "        sys.exit(7)\n"
         "    if mode == 'empty':\n"
         "        sys.exit(0)\n"
-        "    print(f'          -1 2026-06-01 00:00:00        -1 2026-06-01')\n"
-        "    print(f'          -1 {date} 00:00:00        -1 {date}')\n"
+        "    for date in dates:\n"
+        "        print(f'          -1 {date} 00:00:00        -1 {date}')\n"
         "    sys.exit(0)\n"
         "if cmd == 'lsf':\n"
-        "    mode = os.environ.get('FAKE_RCLONE_MODE', 'ok')\n"
-        "    if mode == 'notar':\n"
-        "        print('notes.txt')\n"
+        "    date = selected_date(args[1])\n"
+        "    if date in tar_dates:\n"
+        "        print(os.environ.get('FAKE_RCLONE_TAR_NAME', f'hermes-fleet-encrypted-{date}.tar'))\n"
         "    else:\n"
-        "        print(tar_name)\n"
+        "        print('notes.txt')\n"
         "    sys.exit(0)\n"
         "if cmd == 'size':\n"
         "    print(json.dumps({'bytes': int(os.environ.get('FAKE_RCLONE_BYTES', '2048'))}))\n"
@@ -109,6 +116,13 @@ def test_remote_join_keeps_rclone_colon_shape():
     assert remote_join("fleet-offsite2:", "2026-07-01", "x.tar") == "fleet-offsite2:/2026-07-01/x.tar"
 
 
+def test_resolve_rclone_accepts_binary_name_from_path(tmp_path):
+    rclone = tmp_path / "rclone"
+    rclone.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    rclone.chmod(rclone.stat().st_mode | stat.S_IXUSR)
+    assert resolve_rclone("rclone", environ={"PATH": str(tmp_path)}) == str(rclone.resolve())
+
+
 def test_latest_tar_discovery_parsers_are_deterministic():
     lsd = "          -1 2026-06-30 00:00:00        -1 2026-06-30\nnot-a-date\n          -1 2026-07-01 00:00:00        -1 2026-07-01\n"
     lsf = "notes.txt\nhermes-fleet-encrypted-2026-07-01.tar\nsubdir/\n"
@@ -154,11 +168,20 @@ def test_check_target_fails_on_truncated_tar(tmp_path, monkeypatch):
         check_target(cfg(tmp_path, rclone=rclone, min_bytes=1024))
 
 
-def test_check_target_fails_when_newest_date_has_no_tar(tmp_path, monkeypatch):
+def test_latest_tar_discovery_skips_newest_date_without_tar(tmp_path, monkeypatch):
     rclone = write_fake_rclone(tmp_path)
-    monkeypatch.setenv("FAKE_RCLONE_DATE", "2026-07-02")
-    monkeypatch.setenv("FAKE_RCLONE_MODE", "notar")
-    with pytest.raises(DrillError, match="newest dated offsite backup directory has no"):
+    monkeypatch.setenv("FAKE_RCLONE_DATES", "2026-06-30,2026-07-01,2026-07-02")
+    monkeypatch.setenv("FAKE_RCLONE_TAR_DATES", "2026-07-01")
+    target = check_target(cfg(tmp_path, rclone=rclone, min_bytes=1))
+    assert target.date == "2026-07-01"
+    assert target.remote_path == "fleet-offsite2:/2026-07-01/hermes-fleet-encrypted-2026-07-01.tar"
+
+
+def test_check_target_fails_when_no_dated_directory_has_a_tar(tmp_path, monkeypatch):
+    rclone = write_fake_rclone(tmp_path)
+    monkeypatch.setenv("FAKE_RCLONE_DATES", "2026-07-01,2026-07-02")
+    monkeypatch.setenv("FAKE_RCLONE_TAR_DATES", "")
+    with pytest.raises(DrillError, match="no offsite tar found"):
         check_target(cfg(tmp_path, rclone=rclone, min_bytes=1))
 
 
@@ -214,6 +237,24 @@ def test_run_writes_offsite_proof_with_stubbed_drill_and_fake_rclone(tmp_path, m
     assert proof["source"] == "offsite2"
     assert proof["sha256_verified"] is True
     assert proof["agent"] == "apollo"
+    assert proof["inner_drill_ok"]["stub"] is True
+    assert result.heartbeat_path.exists()
+
+
+def test_selfcheck_path_uses_pull_extract_and_stubbed_drill_without_rclone(tmp_path):
+    source_tar = make_fixture_tar(tmp_path)
+    stub = make_stub_drill(tmp_path)
+    local_cfg = cfg(tmp_path, rclone=None, drill=stub, min_bytes=1)
+    target = TargetInfo(
+        remote="selfcheck-local-fixture:",
+        date="2026-07-01",
+        name=source_tar.name,
+        remote_path="file://" + str(source_tar),
+        size=source_tar.stat().st_size,
+    )
+    result = run_with_target(local_cfg, target)
+    proof = json.loads(result.proof_path.read_text(encoding="utf-8"))
+    assert proof["source"] == "offsite2"
     assert proof["inner_drill_ok"]["stub"] is True
     assert result.heartbeat_path.exists()
 
