@@ -210,8 +210,19 @@ def safe_extract_tar(tar_path: pathlib.Path, extract_root: pathlib.Path) -> None
                 raise DrillError(f"tar member escapes extraction root: {member.name}")
             if member.issym() or member.islnk():
                 raise DrillError(f"tar link members are not allowed: {member.name}")
-            assert_inside(extract_root, extract_root / member.name)
-        tf.extractall(extract_root)
+            if not member.isdir() and not member.isfile():
+                raise DrillError(f"tar special members are not allowed: {member.name}")
+            target = extract_root / member.name
+            assert_inside(extract_root, target)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source = tf.extractfile(member)
+            if source is None:
+                raise DrillError(f"tar file member could not be read: {member.name}")
+            with source, target.open("wb") as out:
+                shutil.copyfileobj(source, out)
 
 
 def assert_extracted_tree(extract_root: pathlib.Path, agent: str) -> pathlib.Path:
