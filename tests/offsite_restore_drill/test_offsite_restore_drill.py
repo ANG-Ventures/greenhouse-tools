@@ -258,7 +258,7 @@ def test_pull_copy_size_mismatch_is_loud(tmp_path, monkeypatch):
 def test_no_third_party_imports_in_tool():
     allowed_roots = {
         "argparse", "datetime", "hashlib", "json", "os", "pathlib", "re", "shutil",
-        "subprocess", "sys", "tarfile", "tempfile", "dataclasses", "typing", "__future__",
+        "stat", "subprocess", "sys", "tarfile", "tempfile", "dataclasses", "typing", "__future__",
     }
     tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
     seen = set()

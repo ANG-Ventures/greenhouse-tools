@@ -17,6 +17,7 @@ import os
 import pathlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -89,15 +90,25 @@ def resolve_rclone(explicit: Optional[str], environ: Optional[Dict[str, str]] = 
             found = shutil.which(candidate, path=env.get("PATH"))
             if found:
                 return str(pathlib.Path(found).resolve())
+            for entry in (env.get("PATH") or os.defpath).split(os.pathsep):
+                path_candidate = pathlib.Path(entry) / candidate
+                if path_candidate.exists() and path_candidate.stat().st_mode & (
+                    stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                ):
+                    return str(path_candidate.resolve())
+            continue
         path = pathlib.Path(candidate).expanduser()
-        if path.exists() and os.access(path, os.X_OK):
+        if path.exists() and path.stat().st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
             return str(path.resolve())
     return None
 
 
 def run_command(argv: Sequence[str], timeout: int, env: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess[str]:
+    command = list(argv)
+    if command and pathlib.Path(command[0]).suffix == ".py":
+        command = [sys.executable] + command
     return subprocess.run(
-        list(argv),
+        command,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
