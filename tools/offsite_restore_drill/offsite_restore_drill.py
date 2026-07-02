@@ -154,21 +154,25 @@ def discover_latest_target(rclone_bin: str, remote: str, min_tar_bytes: int, tim
     if not dates:
         raise DrillError(f"LOUD: no dated offsite backup directories found on {remote}")
 
-    for date in dates:
-        dir_remote = remote_join(remote, date)
-        lsf = run_command([rclone_bin, "lsf", dir_remote, "--files-only"], timeout)
-        tars = parse_lsf_tars(require_ok(lsf, f"rclone lsf {dir_remote}"))
-        for name in tars:
-            remote_path = remote_join(remote, date, name)
-            size_proc = run_command([rclone_bin, "size", remote_path, "--json"], timeout)
-            size = parse_rclone_size(require_ok(size_proc, f"rclone size {remote_path}"))
-            if size < min_tar_bytes:
-                raise DrillError(
-                    f"LOUD: latest offsite tar is truncated/empty: {remote_path} has {size} bytes "
-                    f"(< {min_tar_bytes})"
-                )
-            return TargetInfo(remote=remote, date=date, name=name, remote_path=remote_path, size=size)
-    raise DrillError(f"LOUD: no hermes-fleet-encrypted-YYYY-MM-DD.tar found on {remote}")
+    date = dates[0]
+    dir_remote = remote_join(remote, date)
+    lsf = run_command([rclone_bin, "lsf", dir_remote, "--files-only"], timeout)
+    tars = parse_lsf_tars(require_ok(lsf, f"rclone lsf {dir_remote}"))
+    if not tars:
+        raise DrillError(
+            f"LOUD: newest dated offsite backup directory has no "
+            f"hermes-fleet-encrypted-YYYY-MM-DD.tar: {dir_remote}"
+        )
+    name = tars[-1]
+    remote_path = remote_join(remote, date, name)
+    size_proc = run_command([rclone_bin, "size", remote_path, "--json"], timeout)
+    size = parse_rclone_size(require_ok(size_proc, f"rclone size {remote_path}"))
+    if size < min_tar_bytes:
+        raise DrillError(
+            f"LOUD: latest offsite tar is truncated/empty: {remote_path} has {size} bytes "
+            f"(< {min_tar_bytes})"
+        )
+    return TargetInfo(remote=remote, date=date, name=name, remote_path=remote_path, size=size)
 
 
 def check_target(cfg: RunConfig) -> TargetInfo:

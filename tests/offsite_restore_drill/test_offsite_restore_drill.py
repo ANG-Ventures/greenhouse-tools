@@ -154,6 +154,14 @@ def test_check_target_fails_on_truncated_tar(tmp_path, monkeypatch):
         check_target(cfg(tmp_path, rclone=rclone, min_bytes=1024))
 
 
+def test_check_target_fails_when_newest_date_has_no_tar(tmp_path, monkeypatch):
+    rclone = write_fake_rclone(tmp_path)
+    monkeypatch.setenv("FAKE_RCLONE_DATE", "2026-07-02")
+    monkeypatch.setenv("FAKE_RCLONE_MODE", "notar")
+    with pytest.raises(DrillError, match="newest dated offsite backup directory has no"):
+        check_target(cfg(tmp_path, rclone=rclone, min_bytes=1))
+
+
 def test_check_target_passes_against_fake_nonempty_remote(tmp_path, monkeypatch):
     rclone = write_fake_rclone(tmp_path)
     monkeypatch.setenv("FAKE_RCLONE_BYTES", "2048")
