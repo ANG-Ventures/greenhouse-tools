@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.hermes.offsite-restore-drill</string>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Day</key>
+    <integer>1</integer>
+    <key>Hour</key>
+    <integer>5</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HERMES_HOME</key>
+    <string>/Users/alexgierczyk/.hermes</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>if test -e /Users/alexgierczyk/.hermes/state/offsite-restore-drill/DISABLED; then exit 0; fi; cd /Users/alexgierczyk/.hermes/greenhouse/worktrees/pipeline-2026-07-02-backup-restore-target-freshness-probe &amp;&amp; /opt/homebrew/bin/python3.11 -m tools.offsite_restore_drill.offsite_restore_drill --check-target &amp;&amp; /opt/homebrew/bin/python3.11 -m tools.offsite_restore_drill.offsite_restore_drill --run</string>
+  </array>
+</dict>
+</plist>

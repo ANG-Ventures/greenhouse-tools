@@ -165,6 +165,57 @@ python -m tools.reaction_state --journal reactions.jsonl --db state.db    # repl
 
 ---
 
+# offsite-restore-drill — Reversibility & Operations
+
+**Status:** v0.1 prototype, propose-only, **off by default.**
+
+## What it is
+A stdlib-only Python 3.11 adapter that proves the `fleet-offsite2:` encrypted
+backup tar is usable by pulling the newest dated `hermes-fleet-encrypted-*.tar`
+into a throwaway scratch root, extracting it with a tar path-escape guard, then
+invoking the existing `restore-drill.py` unchanged with `FBRD_BACKUP_ROOT` pointed
+at the extracted offsite copy. `--selfcheck` is an offline health probe using a
+self-built fixture. `--check-target` is separate and validates the real remote is
+reachable and non-empty.
+
+## Reversibility
+
+This tool is reversible by construction.
+
+- **Off by default.** Nothing runs on import. No launchd job is installed. The
+  shipped `launchd/ai.hermes.offsite-restore-drill.plist.proposed` is inert until
+  a human installs it; `RunAtLoad` is false. A `DISABLED` sentinel under
+  `~/.hermes/state/offsite-restore-drill/DISABLED` makes the proposed launchd
+  command exit 0 before checking or pulling anything.
+- **State it touches:** only its configured scratch/state roots, defaulting to
+  `~/.hermes/state/offsite-restore-drill/`. Success writes `offsite-drill.ok` and
+  `backup/last-success-offsite-restore-drill` under that state dir. Failed runs
+  move the scratch dir under that same state dir's `quarantine/`. It never writes
+  to `~/.ai-agent-backups`, never mutates the rclone remote, and never edits the
+  reused local restore drill's state.
+- **Real target liveness fails loud.** Until `rclone` and the `fleet-offsite2:`
+  remote are provisioned, `--check-target` exits non-zero. That is intentional;
+  `--selfcheck` remains offline and independent.
+- **Uninstall = delete files.** To roll back completely:
+  1. If manually installed, remove the launchd job with
+     `launchctl bootout gui/$(id -u)/ai.hermes.offsite-restore-drill` and delete
+     the installed plist.
+  2. Delete state if desired: `rm -rf ~/.hermes/state/offsite-restore-drill`.
+  3. Remove the tool and tests: `rm -rf tools/offsite_restore_drill tests/offsite_restore_drill`.
+  4. Remove the proposed plist artifact:
+     `rm -f launchd/ai.hermes.offsite-restore-drill.plist.proposed`.
+  Nothing else was touched.
+
+## Usage
+```
+python -m tools.offsite_restore_drill.offsite_restore_drill --selfcheck
+python -m tools.offsite_restore_drill.offsite_restore_drill --check-target
+python -m tools.offsite_restore_drill.offsite_restore_drill --run
+```
+
+
+---
+
 # restore-canary -- Reversibility & Operations
 
 **Status:** RESPEC v4, off by default, read-mostly drill.
