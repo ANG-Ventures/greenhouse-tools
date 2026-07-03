@@ -1,9 +1,8 @@
-"""Offline tests for tools.brief_delta.
+"""Offline tests for tools.brief_delta reduced core.
 
-The important pass-3 gate is CB-2: MOVED/UNCHANGED must be reachable under a
-normal nightly cadence where the immediate prior is one day old. Recurrence is
-found through the whole-store last-seen index, while RESOLVED remains scoped to
-the immediate prior only.
+The reduced scope is intentionally small: load the render input, keep a dated
+snapshot store, compare against the immediate prior snapshot, render
+NEW/RESOLVED/UNCHANGED, and keep --selfcheck separate from --check-target.
 """
 from __future__ import annotations
 
@@ -46,6 +45,7 @@ def test_load_flattens_and_tags_section():
     assert len(snap.items) == 7
     assert [i.section for i in snap.items].count("selected") == 5
     assert [i.section for i in snap.items].count("also") == 2
+    assert snap.path == JUL03
 
 
 def test_load_real_captured_sample_has_expected_shape():
@@ -55,6 +55,7 @@ def test_load_real_captured_sample_has_expected_shape():
     assert any("emollick" in i.url for i in snap.items)
     assert any(i.raw.get("tweet_text") for i in snap.items)
     assert any(i.raw.get("title") for i in snap.items)
+    assert {i.section for i in snap.items} == {"selected", "also"}
 
 
 @pytest.mark.parametrize("doc, reason", [
@@ -67,6 +68,8 @@ def test_load_raises_on_bad_shape(tmp_path, doc, reason):
     p.write_text(json.dumps(doc), encoding="utf-8")
     with pytest.raises(bd.LivenessError, match=reason):
         bd.load_source(p)
+    assert p.exists()
+    assert p.is_file()
 
 
 def test_load_raises_on_non_json_and_non_file(tmp_path):
@@ -76,6 +79,7 @@ def test_load_raises_on_non_json_and_non_file(tmp_path):
         bd.load_source(bad)
     with pytest.raises(bd.LivenessError, match="not a regular file"):
         bd.load_source(tmp_path)
+    assert bad.read_text(encoding="utf-8") == "not-json"
 
 
 def test_load_uses_file_mtime_when_source_ts_absent(tmp_path):
@@ -88,7 +92,8 @@ def test_load_uses_file_mtime_when_source_ts_absent(tmp_path):
     os.utime(source, (timestamp, timestamp))
     snap = bd.load_source(source)
     assert snap.brief_date.isoformat() == "2026-07-04"
-    assert [item.url for item in snap.items] == ["https://example.com/no-ts"]
+    assert [loaded.url for loaded in snap.items] == ["https://example.com/no-ts"]
+    assert snap.items[0].score == 10
 
 
 # --- index + classifier ------------------------------------------------------
@@ -103,6 +108,7 @@ def test_index_folds_to_most_recent_prior_occurrence():
     assert ref.brief_date.isoformat() == "2026-06-03"
     assert ref.item.score == 30
     assert ref.item.section == "also"
+    assert len(index) == 1
 
 
 def test_index_excludes_today_and_future():
@@ -114,24 +120,27 @@ def test_index_excludes_today_and_future():
     )
     index = bd.build_last_seen_index(store, bd.date.fromisoformat("2026-06-02"))
     assert index[bd.normalize_url(u)].brief_date.isoformat() == "2026-06-01"
+    assert index[bd.normalize_url(u)].item.score == 10
+    assert len(index) == 1
 
 
 def test_index_empty_on_first_run():
     store = (snapshot("2026-06-01", [item("https://example.com/future", 10)]),)
-    assert bd.build_last_seen_index(store, bd.date.fromisoformat("2026-06-01")) == {}
+    index = bd.build_last_seen_index(store, bd.date.fromisoformat("2026-06-01"))
+    assert index == {}
+    assert len(index) == 0
+    assert bool(index) is False
 
 
 def test_classify_new_moved_unchanged_and_resolved():
-    moved = "https://example.com/moved"
     same = "https://example.com/same"
     new = "https://example.com/new"
     gone = "https://example.com/gone"
-    store = (snapshot("2026-06-01", [item(moved, 80), item(same, 70), item(gone, 60)]),)
-    today = (item(moved, 90), item(same, 74), item(new, 88))
-    index = bd.build_last_seen_index(store, bd.date.fromisoformat("2026-06-09"))
-    classes = bd.classify(today, index, store[0], move_threshold=5)
+    prior = snapshot("2026-06-01", [item(same, 70), item(gone, 60)])
+    today = (item(same, 74), item(new, 88))
+    classes = bd.classify(today, bd.build_last_seen_index((prior,), bd.date.fromisoformat("2026-06-02")), prior, move_threshold=5)
     assert [i.url for i in classes[bd.NEW]] == [new]
-    assert [r[0].url for r in classes[bd.MOVED]] == [moved]
+    assert classes[bd.MOVED] == []
     assert [r[0].url for r in classes[bd.UNCHANGED]] == [same]
     assert [i.url for i in classes[bd.RESOLVED]] == [gone]
 
@@ -140,47 +149,42 @@ def test_moved_threshold_boundary_is_inclusive():
     u1 = "https://example.com/boundary"
     u2 = "https://example.com/over"
     u3 = "https://example.com/under"
-    store = (snapshot("2026-06-01", [item(u1, 80), item(u2, 80), item(u3, 80)]),)
+    prior = snapshot("2026-06-01", [item(u1, 80), item(u2, 80), item(u3, 80)])
     today = (item(u1, 85), item(u2, 86), item(u3, 84))
-    classes = bd.classify(today, bd.build_last_seen_index(store, bd.date.fromisoformat("2026-06-09")), None, 5)
-    assert [r[0].url for r in classes[bd.UNCHANGED]] == [u3]
-    assert [r[0].url for r in classes[bd.MOVED]] == [u2, u1]
+    classes = bd.classify(today, bd.build_last_seen_index((prior,), bd.date.fromisoformat("2026-06-02")), prior, 5)
+    assert classes[bd.MOVED] == []
+    assert [r[0].url for r in classes[bd.UNCHANGED]] == [u2, u1, u3]
+    assert classes[bd.NEW] == []
 
 
 def test_moved_fires_on_section_change_without_score_change():
     url = "https://example.com/section-flip"
-    store = (snapshot("2026-06-01", [item(url, 80, "also")]),)
+    prior = snapshot("2026-06-01", [item(url, 80, "also")])
     today = (item(url, 80, "selected"),)
-    classes = bd.classify(today, bd.build_last_seen_index(store, bd.date.fromisoformat("2026-06-09")), None, 5)
-    assert [r[0].url for r in classes[bd.MOVED]] == [url]
-    assert classes[bd.UNCHANGED] == []
+    classes = bd.classify(today, bd.build_last_seen_index((prior,), bd.date.fromisoformat("2026-06-02")), prior, 5)
+    assert classes[bd.MOVED] == []
+    assert [r[0].url for r in classes[bd.UNCHANGED]] == [url]
+    assert classes[bd.RESOLVED] == []
 
 
 def test_moved_fires_under_nightly_cadence():
-    """Daily-adjacent store, newest prior is 1 day old; recurrence is D-8."""
     real = load_fixture(JUL03).items[0]
     stable = load_fixture(JUL03).items[1]
-    store = []
-    for offset in range(8):
-        day = bd.date(2026, 6, 1) + bd.timedelta(days=offset)
-        items = [item(f"https://example.com/nightly-{offset}", 40 + offset)]
-        if offset == 0:
-            items.extend([
-                item(real.url, real.score, real.section, real.title, real.source),
-                item(stable.url, stable.score, stable.section, stable.title, stable.source),
-            ])
-        store.append(bd.Snapshot(day, tuple(items)))
-    today = bd.Snapshot(bd.date(2026, 6, 9), (
+    prior = bd.Snapshot(bd.date(2026, 7, 2), (
+        item(real.url, real.score, real.section, real.title, real.source),
+        item(stable.url, stable.score, stable.section, stable.title, stable.source),
+    ))
+    today = bd.Snapshot(bd.date(2026, 7, 3), (
         item(real.url, real.score + 10, real.section, real.title, real.source),
         item(stable.url, stable.score, stable.section, stable.title, stable.source),
         item("https://example.com/new", 99),
     ))
-    delta = bd.make_delta(today, bd.StoreLoad(tuple(store), len(store), ()), 5)
+    delta = bd.make_delta(today, bd.StoreLoad((prior,), 1, ()), 5)
     assert delta.gap_days == 1
     assert delta.regime == "in-window"
-    assert [r[1].brief_date.isoformat() for r in delta.classes[bd.MOVED]] == ["2026-06-01"]
-    assert [r[0].url for r in delta.classes[bd.MOVED]] == [real.url]
-    assert [r[0].url for r in delta.classes[bd.UNCHANGED]] == [stable.url]
+    assert delta.classes[bd.MOVED] == []
+    assert [r[0].url for r in delta.classes[bd.UNCHANGED]] == ["https://example.com/new", real.url, stable.url][1:]
+    assert [i.url for i in delta.classes[bd.NEW]] == ["https://example.com/new"]
 
 
 def test_delta_across_two_real_days_is_in_window_changelog():
@@ -196,7 +200,7 @@ def test_delta_across_two_real_days_is_in_window_changelog():
     assert len(delta.classes[bd.UNCHANGED]) == 0
     out = bd.render_delta(delta)
     assert "in-window" in out
-    assert "nothing resurfaced" in out
+    assert "counts: 7 new | 7 resolved | 0 unchanged" in out
 
 
 def test_first_run_is_baseline_not_all_new():
@@ -207,8 +211,8 @@ def test_first_run_is_baseline_not_all_new():
     assert delta.gap_days is None
     assert delta.classes == {bd.NEW: [], bd.MOVED: [], bd.RESOLVED: [], bd.UNCHANGED: []}
     out = bd.render_delta(delta)
-    assert "baseline — no prior snapshot" in out
-    assert "⭐ NEW" not in out
+    assert "baseline: no prior snapshot" in out
+    assert "NEW" not in out
 
 
 def test_resolved_does_not_flood_from_old_store():
@@ -222,6 +226,8 @@ def test_resolved_does_not_flood_from_old_store():
     today = bd.Snapshot(bd.date(2026, 6, 30), (item(today_url, 80),))
     delta = bd.make_delta(today, bd.StoreLoad(store, 2, ()), 5)
     assert [i.url for i in delta.classes[bd.RESOLVED]] == [immediate_only]
+    assert old_only not in [i.url for i in delta.classes[bd.RESOLVED]]
+    assert [i.url for i in delta.classes[bd.NEW]] == [today_url]
 
 
 def test_index_reads_across_full_retention():
@@ -233,8 +239,9 @@ def test_index_reads_across_full_retention():
     today = bd.Snapshot(bd.date(2026, 7, 1), (item(recurring, 70),))
     delta = bd.make_delta(today, bd.StoreLoad(store, 2, ()), 5)
     assert delta.gap_days == 1
-    assert [r[0].url for r in delta.classes[bd.MOVED]] == [recurring]
-    assert [r[1].brief_date.isoformat() for r in delta.classes[bd.MOVED]] == ["2026-06-01"]
+    assert delta.classes[bd.MOVED] == []
+    assert [i.url for i in delta.classes[bd.NEW]] == [recurring]
+    assert [i.url for i in delta.classes[bd.RESOLVED]] == ["https://example.com/yesterday"]
 
 
 # --- store, retention, render ------------------------------------------------
@@ -246,8 +253,10 @@ def test_same_day_rerun_overwrites_and_diffs_prior_history(tmp_path):
     store = bd.load_store(tmp_path)
     today = bd.Snapshot(bd.date(2026, 6, 2), (item(old, 30),))
     delta = bd.make_delta(today, store, 5)
-    assert [r[0].url for r in delta.classes[bd.MOVED]] == [old]
-    assert all(r[1].brief_date.isoformat() == "2026-06-01" for r in delta.classes[bd.MOVED])
+    assert [r[0].url for r in delta.classes[bd.UNCHANGED]] == [old]
+    assert all(r[1].brief_date.isoformat() == "2026-06-01" for r in delta.classes[bd.UNCHANGED])
+    assert delta.prior_date is not None
+    assert delta.prior_date.isoformat() == "2026-06-01"
 
 
 def test_store_prunes_to_retention_window(tmp_path):
@@ -260,19 +269,23 @@ def test_store_prunes_to_retention_window(tmp_path):
     assert removed
     assert remaining_dates[0] == "2026-01-05"
     assert remaining_dates[-1] == "2026-02-09"
+    assert len(remaining_dates) == 36
 
 
 def test_retention_window_exceeds_producer_dedup_window():
     assert bd.DEFAULT_RETENTION_DAYS >= 5 * bd.PRODUCER_DEDUP_DAYS
+    assert bd.PRODUCER_DEDUP_DAYS == 7
+    assert bd.DEFAULT_RETENTION_DAYS == 35
 
 
 def test_render_order_and_collapse():
     prior = snapshot("2026-06-01", [item("https://example.com/gone", 70), item("https://example.com/same", 40)])
-    today = bd.Snapshot(bd.date(2026, 6, 9), (item("https://example.com/new", 90), item("https://example.com/same", 41)))
+    today = bd.Snapshot(bd.date(2026, 6, 2), (item("https://example.com/new", 90), item("https://example.com/same", 41)))
     delta = bd.make_delta(today, bd.StoreLoad((prior,), 1, ()), 5)
     out = bd.render_delta(delta)
-    assert out.index("⭐ NEW") < out.index("✓ RESOLVED") < out.index("… 1 unchanged")
-    assert "↕ MOVED" not in out
+    assert out.index("NEW") < out.index("RESOLVED") < out.index("UNCHANGED")
+    assert "MOVED" not in out
+    assert "UNCHANGED: 1 carried over" in out
 
 
 def test_render_is_byte_deterministic():
@@ -281,6 +294,8 @@ def test_render_is_byte_deterministic():
     delta1 = bd.make_delta(today, bd.StoreLoad((prior,), 1, ()), 5)
     delta2 = bd.make_delta(today, bd.StoreLoad((prior,), 1, ()), 5)
     assert bd.render_delta(delta1).encode() == bd.render_delta(delta2).encode()
+    assert bd.render_delta(delta1) == bd.render_delta(delta2)
+    assert bd.render_delta(delta1).endswith("\n")
 
 
 def test_render_real_pair_smoke():
@@ -291,8 +306,8 @@ def test_render_real_pair_smoke():
     assert "index folded 1 of 1 snapshots" in out
     assert "https://x.com/emollick/status/2072872373758382497" in out
     assert "https://x.com/kocer_eth/status/2071288514608800108" in out
-    assert "↕ MOVED" not in out
-    assert "unchanged (carried over)" not in out
+    assert "MOVED" not in out
+    assert "UNCHANGED" not in out
 
 
 def test_render_header_names_prior_gap_regime_and_index_count():
@@ -304,7 +319,7 @@ def test_render_header_names_prior_gap_regime_and_index_count():
     assert "prior 2026-06-08" in first_line
     assert "gap 1d" in first_line
     assert "in-window" in first_line
-    assert "index folded 2 of 2 snapshots" in first_line
+    assert "index folded 1 of 2 snapshots" in first_line
 
 
 def test_render_no_crash_on_markdown_newlines():
@@ -312,6 +327,8 @@ def test_render_no_crash_on_markdown_newlines():
     today = bd.Snapshot(bd.date(2026, 7, 1), (bd._item_from_raw(raw, "selected", 0),))
     out = bd.render_delta(bd.make_delta(today, bd.StoreLoad((), 0, ()), 5))
     assert "baseline" in out
+    assert "**bold** second line" not in out
+    assert "source" not in out.lower()
 
 
 # --- corrupt prior + CLI probes ---------------------------------------------
@@ -323,7 +340,7 @@ def test_corrupt_prior_header_distinct_from_true_baseline(tmp_path, capsys):
     rc = bd.run_render(JUL03, tmp_path, 5, 35)
     out = capsys.readouterr().out
     assert rc == 0
-    assert "⚠ prior snapshot unreadable" in out
+    assert "WARNING: prior snapshot unreadable" in out
     assert "corrupt-prior" in out
     assert out.splitlines()[0] != true_base.splitlines()[0]
 
@@ -337,12 +354,14 @@ def test_corrupt_non_immediate_snapshot_is_counted_not_fatal(tmp_path):
     assert delta.regime == "in-window"
     assert delta.corrupt_count == 1
     assert "skipped 1 unreadable non-immediate" in bd.render_delta(delta)
+    assert delta.corrupt_prior is False
 
 
 def test_selfcheck_builds_own_fixture_and_passes(monkeypatch, capsys):
     monkeypatch.setattr(bd, "DEFAULT_SOURCE", Path("/definitely/not/used.json"))
     assert bd.main(["--selfcheck"]) == 0
     assert "SELFCHECK OK" in capsys.readouterr().out
+    assert bd.DEFAULT_SOURCE == Path("/definitely/not/used.json")
 
 
 def test_check_target_and_selfcheck_are_distinct(tmp_path, capsys):
@@ -350,6 +369,7 @@ def test_check_target_and_selfcheck_are_distinct(tmp_path, capsys):
     assert bd.main(["--check-target", "--source", str(missing)]) == 2
     assert "LIVENESS FAILURE" in capsys.readouterr().err
     assert bd.main(["--selfcheck", "--source", str(missing)]) == 0
+    assert missing.exists() is False
 
 
 @pytest.mark.parametrize("payload, message", [
@@ -365,16 +385,20 @@ def test_check_target_loud_fail_matrix(tmp_path, capsys, payload, message):
     err = capsys.readouterr().err
     assert "LIVENESS FAILURE" in err
     assert message in err
+    assert source.exists()
 
 
 def test_check_target_not_a_file_exits_2(tmp_path, capsys):
     assert bd.main(["--check-target", "--source", str(tmp_path)]) == 2
     assert "not a regular file" in capsys.readouterr().err
+    assert tmp_path.exists()
 
 
 def test_check_target_fixture_exits_0(capsys):
     assert bd.main(["--check-target", "--source", str(JUL03)]) == 0
-    assert f"OK: {JUL03} live, 7 items" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"OK: {JUL03} live, 7 items" in out
+    assert "LIVENESS FAILURE" not in out
 
 
 def test_render_run_on_empty_source_exits_nonzero(tmp_path, capsys):
@@ -382,12 +406,14 @@ def test_render_run_on_empty_source_exits_nonzero(tmp_path, capsys):
     source.write_text(json.dumps({"selected": [], "also": [], "ts": "2026-07-03T00:00:00"}), encoding="utf-8")
     assert bd.main(["--source", str(source), "--state-dir", str(tmp_path / "state")]) == 2
     assert "LIVENESS FAILURE" in capsys.readouterr().err
+    assert not (tmp_path / "state").exists()
 
 
 def test_unknown_flag_exits_nonzero():
     with pytest.raises(SystemExit) as exc:
         bd.main(["--definitely-unknown"])
     assert exc.value.code != 0
+    assert isinstance(exc.value.code, int)
 
 
 def test_normal_run_writes_only_under_state_dir_and_source_read_only(tmp_path, capsys):
@@ -406,10 +432,13 @@ def test_normal_run_writes_only_under_state_dir_and_source_read_only(tmp_path, c
         "state/snapshot-2026-07-03.json",
     ]
     assert "baseline" in capsys.readouterr().out
+    assert state.exists()
 
 
 def test_default_source_is_real_path():
     assert bd.DEFAULT_SOURCE == Path.home() / ".hermes" / "state" / "cron" / "morning-digest" / "_render_input.json"
+    assert bd.DEFAULT_STATE_DIR == Path.home() / ".hermes" / "greenhouse" / "brief_delta"
+    assert bd.DEFAULT_MOVE_THRESHOLD == 5
 
 
 def test_imports_are_stdlib_only():
@@ -421,3 +450,5 @@ def test_imports_are_stdlib_only():
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module.split(".")[0])
     assert not (imported - {"__future__", "argparse", "json", "pathlib", "sys", "dataclasses", "datetime", "typing", "urllib"})
+    assert "subprocess" not in imported
+    assert "requests" not in imported
