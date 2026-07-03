@@ -9,6 +9,8 @@ any assertions or test coverage.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 _REAL_TOOLS = Path(__file__).resolve().parents[2] / "tools"
-__path__: list[str] = [str(_REAL_TOOLS)]
+_PACKAGE_PATH = cast(list[str], __path__)
+_PACKAGE_PATH[:] = [str(_REAL_TOOLS)]

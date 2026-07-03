@@ -1,12 +1,13 @@
 # brief-delta — Reversibility & Operations
 
-**Status:** v0.2 reduced standalone read-side delta tool, **off by default.**
+**Status:** v0.3 reduced standalone read-side delta tool, **off by default.**
 
 ## What it is
 A stdlib-only Python 3.11 tool that reads the morning-digest structured
 `_render_input.json`, builds a bounded local snapshot store, and prints the
-small immediate-prior core: NEW / RESOLVED / UNCHANGED. MOVED/resurfacing output
-is intentionally disabled in this reduced build. It does not post to Discord,
+small immediate-prior core: NEW / MOVED / RESOLVED / UNCHANGED. MOVED is local
+and deterministic: same URL as yesterday with a section change or score movement
+at/above `--move-threshold` (default 5). It does not post to Discord,
 edit the producer, or wire itself into cron.
 
 ## Reversibility
@@ -35,7 +36,7 @@ This tool is reversible by construction.
 ## Health & liveness probes (NOT the same thing)
 - **`--selfcheck`** — offline deploy health probe. Builds its own synthetic
   immediate-prior fixture, reads no real source, and exits `0` only if
-  NEW/RESOLVED/UNCHANGED classify correctly behind a 1-day-old prior.
+  NEW/MOVED/RESOLVED/UNCHANGED classify correctly behind a 1-day-old prior.
 - **`--check-target`** — real-source liveness gate. Asserts the configured
   `_render_input.json` exists, is a regular file, parses as JSON, has selected
   and also lists, and contains at least one item with a URL. It exits non-zero

@@ -2,7 +2,7 @@
 """brief_delta -- small offline delta layer for the Greenhouse morning brief.
 
 Reduced core: read the structured render input, keep dated JSON snapshots, and
-render only immediate-prior NEW / RESOLVED / UNCHANGED counts. No network, no
+render only immediate-prior NEW / MOVED / RESOLVED / UNCHANGED counts. No network, no
 producer mutation, stdlib only. ``--selfcheck`` is an offline logic probe;
 ``--check-target`` is the real-source liveness gate.
 """
@@ -296,18 +296,15 @@ def classify(
     immediate_prior: Snapshot | None,
     move_threshold: int = DEFAULT_MOVE_THRESHOLD,
 ) -> dict[str, list]:
-    """Classify only the reduced immediate delta core.
-
-    ``move_threshold`` remains accepted for CLI/API compatibility but MOVED is no
-    longer emitted; previously seen current items are UNCHANGED.
-    """
-    del move_threshold
+    """Classify only the reduced immediate delta core."""
     out: dict[str, list] = {NEW: [], MOVED: [], RESOLVED: [], UNCHANGED: []}
     today_by_url = {item.norm_url: item for item in today}
     for item in today:
         prior = index.get(item.norm_url)
         if prior is None:
             out[NEW].append(item)
+        elif item.section != prior.item.section or abs(item.score - prior.item.score) >= move_threshold:
+            out[MOVED].append((item, prior))
         else:
             out[UNCHANGED].append((item, prior))
     if immediate_prior is not None:
@@ -315,6 +312,7 @@ def classify(
             if prior_item.norm_url not in today_by_url:
                 out[RESOLVED].append(prior_item)
     out[NEW].sort(key=lambda item: (-item.score, item.norm_url))
+    out[MOVED].sort(key=lambda row: (-row[0].score, row[0].norm_url))
     out[RESOLVED].sort(key=lambda item: (-item.score, item.norm_url))
     out[UNCHANGED].sort(key=lambda row: (-row[0].score, row[0].norm_url))
     return out
@@ -345,8 +343,11 @@ def make_delta(today: Snapshot, store_load: StoreLoad, move_threshold: int = DEF
     return Delta(today.brief_date, prior_date, gap, regime, folded, store_load.total_files, False, None, len(store_load.corrupt), classes)
 
 
-def _item_line(item: Item) -> str:
-    return f"- {item.score} | {item.source} | {item.title} | {item.url}"
+def _change_line(status: str, item: Item) -> str:
+    return f"- {status} | {item.score} | {item.source} | {item.title} | {item.url}"
+
+def _moved_line(item: Item, prior: PriorRef) -> str:
+    return f"{_change_line(MOVED, item)} | was {prior.item.section} score {prior.item.score}"
 
 
 def render_delta(delta: Delta) -> str:
@@ -355,7 +356,7 @@ def render_delta(delta: Delta) -> str:
     gap = "n/a" if delta.gap_days is None else f"{delta.gap_days}d"
     lines = [
         f"brief-delta: {delta.today_date.isoformat()} | prior {prior} | gap {gap} | {delta.regime} | index folded {delta.index_folded} of {delta.index_total} snapshots",
-        f"counts: {counts[NEW]} new | {counts[RESOLVED]} resolved | {counts[UNCHANGED]} unchanged",
+        f"counts: {counts[NEW]} new | {counts[MOVED]} moved | {counts[RESOLVED]} resolved | {counts[UNCHANGED]} unchanged",
     ]
     if delta.corrupt_prior:
         lines.append(f"WARNING: prior snapshot unreadable; no delta emitted: {delta.corrupt_prior_path}")
@@ -369,11 +370,15 @@ def render_delta(delta: Delta) -> str:
     if delta.classes[NEW]:
         lines.append("")
         lines.append("NEW")
-        lines.extend(_item_line(item) for item in delta.classes[NEW])
+        lines.extend(_change_line(NEW, item) for item in delta.classes[NEW])
+    if delta.classes[MOVED]:
+        lines.append("")
+        lines.append("MOVED")
+        lines.extend(_moved_line(item, prior) for item, prior in delta.classes[MOVED])
     if delta.classes[RESOLVED]:
         lines.append("")
         lines.append("RESOLVED")
-        lines.extend(_item_line(item) for item in delta.classes[RESOLVED])
+        lines.extend(_change_line(RESOLVED, item) for item in delta.classes[RESOLVED])
     if delta.classes[UNCHANGED]:
         lines.append("")
         lines.append(f"UNCHANGED: {len(delta.classes[UNCHANGED])} carried over")
@@ -433,22 +438,22 @@ def run_selfcheck() -> int:
         _synthetic_item("https://example.com/gone", 60),
     ))
     today = Snapshot(date(2026, 7, 3), (
-        _synthetic_item("https://example.com/stable/", 71),
+        _synthetic_item("https://example.com/stable/", 75),
         _synthetic_item("https://example.com/new", 90),
     ))
     delta = make_delta(today, StoreLoad((prior,), 1, ()), DEFAULT_MOVE_THRESHOLD)
     ok = (
         delta.regime == "in-window"
         and len(delta.classes[NEW]) == 1
+        and len(delta.classes[MOVED]) == 1
         and len(delta.classes[RESOLVED]) == 1
-        and len(delta.classes[UNCHANGED]) == 1
-        and not delta.classes[MOVED]
-        and "counts: 1 new | 1 resolved | 1 unchanged" in render_delta(delta)
+        and len(delta.classes[UNCHANGED]) == 0
+        and "counts: 1 new | 1 moved | 1 resolved | 0 unchanged" in render_delta(delta)
     )
     if not ok:
         print("SELFCHECK FAIL: reduced immediate-delta fixture did not classify as expected", file=sys.stderr)
         return 1
-    print("SELFCHECK OK: reduced immediate-delta fixture produced NEW/RESOLVED/UNCHANGED")
+    print("SELFCHECK OK: reduced immediate-delta fixture produced NEW/MOVED/RESOLVED/UNCHANGED")
     return 0
 
 
@@ -456,7 +461,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="brief-delta", description="Render a small delta layer for the morning brief.")
     parser.add_argument("--source", type=pathlib.Path, default=DEFAULT_SOURCE, help="structured morning-digest _render_input.json")
     parser.add_argument("--state-dir", type=pathlib.Path, default=DEFAULT_STATE_DIR, help="brief_delta snapshot store")
-    parser.add_argument("--move-threshold", type=int, default=DEFAULT_MOVE_THRESHOLD, help="accepted for compatibility; MOVED output is disabled")
+    parser.add_argument("--move-threshold", type=int, default=DEFAULT_MOVE_THRESHOLD, help="minimum absolute score change that classifies a carried item as MOVED")
     parser.add_argument("--retention-days", type=int, default=DEFAULT_RETENTION_DAYS, help="rolling snapshot retention window")
     parser.add_argument("--render", action="store_true", help="render the delta (default action)")
     parser.add_argument("--selfcheck", action="store_true", help="offline deploy health probe over a synthetic fixture")

@@ -152,8 +152,8 @@ def test_moved_threshold_boundary_is_inclusive():
     prior = snapshot("2026-06-01", [item(u1, 80), item(u2, 80), item(u3, 80)])
     today = (item(u1, 85), item(u2, 86), item(u3, 84))
     classes = bd.classify(today, bd.build_last_seen_index((prior,), bd.date.fromisoformat("2026-06-02")), prior, 5)
-    assert classes[bd.MOVED] == []
-    assert [r[0].url for r in classes[bd.UNCHANGED]] == [u2, u1, u3]
+    assert [r[0].url for r in classes[bd.MOVED]] == [u2, u1]
+    assert [r[0].url for r in classes[bd.UNCHANGED]] == [u3]
     assert classes[bd.NEW] == []
 
 
@@ -162,8 +162,8 @@ def test_moved_fires_on_section_change_without_score_change():
     prior = snapshot("2026-06-01", [item(url, 80, "also")])
     today = (item(url, 80, "selected"),)
     classes = bd.classify(today, bd.build_last_seen_index((prior,), bd.date.fromisoformat("2026-06-02")), prior, 5)
-    assert classes[bd.MOVED] == []
-    assert [r[0].url for r in classes[bd.UNCHANGED]] == [url]
+    assert [r[0].url for r in classes[bd.MOVED]] == [url]
+    assert classes[bd.UNCHANGED] == []
     assert classes[bd.RESOLVED] == []
 
 
@@ -182,8 +182,8 @@ def test_moved_fires_under_nightly_cadence():
     delta = bd.make_delta(today, bd.StoreLoad((prior,), 1, ()), 5)
     assert delta.gap_days == 1
     assert delta.regime == "in-window"
-    assert delta.classes[bd.MOVED] == []
-    assert [r[0].url for r in delta.classes[bd.UNCHANGED]] == ["https://example.com/new", real.url, stable.url][1:]
+    assert [r[0].url for r in delta.classes[bd.MOVED]] == [real.url]
+    assert [r[0].url for r in delta.classes[bd.UNCHANGED]] == [stable.url]
     assert [i.url for i in delta.classes[bd.NEW]] == ["https://example.com/new"]
 
 
@@ -200,7 +200,7 @@ def test_delta_across_two_real_days_is_in_window_changelog():
     assert len(delta.classes[bd.UNCHANGED]) == 0
     out = bd.render_delta(delta)
     assert "in-window" in out
-    assert "counts: 7 new | 7 resolved | 0 unchanged" in out
+    assert "counts: 7 new | 0 moved | 7 resolved | 0 unchanged" in out
 
 
 def test_first_run_is_baseline_not_all_new():
@@ -243,6 +243,17 @@ def test_index_reads_across_full_retention():
     assert [i.url for i in delta.classes[bd.NEW]] == [recurring]
     assert [i.url for i in delta.classes[bd.RESOLVED]] == ["https://example.com/yesterday"]
 
+def test_delta_only_uses_yesterday_for_moved_not_full_retention():
+    recurring = "https://example.com/retained"
+    store = (
+        snapshot("2026-06-01", [item(recurring, 50)]),
+        snapshot("2026-06-30", [item("https://example.com/yesterday", 51)]),
+    )
+    today = bd.Snapshot(bd.date(2026, 7, 1), (item(recurring, 70),))
+    delta = bd.make_delta(today, bd.StoreLoad(store, 2, ()), 5)
+    assert delta.classes[bd.MOVED] == []
+    assert [i.url for i in delta.classes[bd.NEW]] == [recurring]
+
 
 # --- store, retention, render ------------------------------------------------
 def test_same_day_rerun_overwrites_and_diffs_prior_history(tmp_path):
@@ -253,8 +264,8 @@ def test_same_day_rerun_overwrites_and_diffs_prior_history(tmp_path):
     store = bd.load_store(tmp_path)
     today = bd.Snapshot(bd.date(2026, 6, 2), (item(old, 30),))
     delta = bd.make_delta(today, store, 5)
-    assert [r[0].url for r in delta.classes[bd.UNCHANGED]] == [old]
-    assert all(r[1].brief_date.isoformat() == "2026-06-01" for r in delta.classes[bd.UNCHANGED])
+    assert [r[0].url for r in delta.classes[bd.MOVED]] == [old]
+    assert all(r[1].brief_date.isoformat() == "2026-06-01" for r in delta.classes[bd.MOVED])
     assert delta.prior_date is not None
     assert delta.prior_date.isoformat() == "2026-06-01"
 
@@ -283,8 +294,8 @@ def test_render_order_and_collapse():
     today = bd.Snapshot(bd.date(2026, 6, 2), (item("https://example.com/new", 90), item("https://example.com/same", 41)))
     delta = bd.make_delta(today, bd.StoreLoad((prior,), 1, ()), 5)
     out = bd.render_delta(delta)
-    assert out.index("NEW") < out.index("RESOLVED") < out.index("UNCHANGED")
-    assert "MOVED" not in out
+    assert out.index("- NEW ") < out.index("- RESOLVED ") < out.index("UNCHANGED")
+    assert "- MOVED " not in out
     assert "UNCHANGED: 1 carried over" in out
 
 
@@ -306,8 +317,26 @@ def test_render_real_pair_smoke():
     assert "index folded 1 of 1 snapshots" in out
     assert "https://x.com/emollick/status/2072872373758382497" in out
     assert "https://x.com/kocer_eth/status/2071288514608800108" in out
-    assert "MOVED" not in out
+    assert "- MOVED " not in out
     assert "UNCHANGED" not in out
+
+def test_render_leads_changed_items_with_status_prefix():
+    prior = snapshot("2026-06-01", [
+        item("https://example.com/gone", 70),
+        item("https://example.com/moved", 40, "also"),
+    ])
+    today = bd.Snapshot(bd.date(2026, 6, 2), (
+        item("https://example.com/new", 90),
+        item("https://example.com/moved", 48, "selected"),
+    ))
+    out = bd.render_delta(bd.make_delta(today, bd.StoreLoad((prior,), 1, ()), 5))
+    assert "counts: 1 new | 1 moved | 1 resolved | 0 unchanged" in out
+    changed = [line for line in out.splitlines() if line.startswith("- ")]
+    assert changed == [
+        "- NEW | 90 | X | fixture item | https://example.com/new",
+        "- MOVED | 48 | X | fixture item | https://example.com/moved | was also score 40",
+        "- RESOLVED | 70 | X | fixture item | https://example.com/gone",
+    ]
 
 
 def test_render_header_names_prior_gap_regime_and_index_count():
