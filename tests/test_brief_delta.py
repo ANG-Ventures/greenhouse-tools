@@ -78,6 +78,19 @@ def test_load_raises_on_non_json_and_non_file(tmp_path):
         bd.load_source(tmp_path)
 
 
+def test_load_uses_file_mtime_when_source_ts_absent(tmp_path):
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps({
+        "selected": [{"url": "https://example.com/no-ts", "score": 10, "source": "X"}],
+        "also": [],
+    }), encoding="utf-8")
+    timestamp = bd.datetime(2026, 7, 4, 12, 0, 0).timestamp()
+    os.utime(source, (timestamp, timestamp))
+    snap = bd.load_source(source)
+    assert snap.brief_date.isoformat() == "2026-07-04"
+    assert [item.url for item in snap.items] == ["https://example.com/no-ts"]
+
+
 # --- index + classifier ------------------------------------------------------
 def test_index_folds_to_most_recent_prior_occurrence():
     u = "https://Example.com/a/"
@@ -103,6 +116,11 @@ def test_index_excludes_today_and_future():
     assert index[bd.normalize_url(u)].brief_date.isoformat() == "2026-06-01"
 
 
+def test_index_empty_on_first_run():
+    store = (snapshot("2026-06-01", [item("https://example.com/future", 10)]),)
+    assert bd.build_last_seen_index(store, bd.date.fromisoformat("2026-06-01")) == {}
+
+
 def test_classify_new_moved_unchanged_and_resolved():
     moved = "https://example.com/moved"
     same = "https://example.com/same"
@@ -118,14 +136,24 @@ def test_classify_new_moved_unchanged_and_resolved():
     assert [i.url for i in classes[bd.RESOLVED]] == [gone]
 
 
-def test_moved_threshold_boundary():
+def test_moved_threshold_boundary_is_inclusive():
     u1 = "https://example.com/boundary"
     u2 = "https://example.com/over"
-    store = (snapshot("2026-06-01", [item(u1, 80), item(u2, 80)]),)
-    today = (item(u1, 85), item(u2, 86))
+    u3 = "https://example.com/under"
+    store = (snapshot("2026-06-01", [item(u1, 80), item(u2, 80), item(u3, 80)]),)
+    today = (item(u1, 85), item(u2, 86), item(u3, 84))
     classes = bd.classify(today, bd.build_last_seen_index(store, bd.date.fromisoformat("2026-06-09")), None, 5)
-    assert [r[0].url for r in classes[bd.UNCHANGED]] == [u1]
-    assert [r[0].url for r in classes[bd.MOVED]] == [u2]
+    assert [r[0].url for r in classes[bd.UNCHANGED]] == [u3]
+    assert [r[0].url for r in classes[bd.MOVED]] == [u2, u1]
+
+
+def test_moved_fires_on_section_change_without_score_change():
+    url = "https://example.com/section-flip"
+    store = (snapshot("2026-06-01", [item(url, 80, "also")]),)
+    today = (item(url, 80, "selected"),)
+    classes = bd.classify(today, bd.build_last_seen_index(store, bd.date.fromisoformat("2026-06-09")), None, 5)
+    assert [r[0].url for r in classes[bd.MOVED]] == [url]
+    assert classes[bd.UNCHANGED] == []
 
 
 def test_moved_fires_under_nightly_cadence():
@@ -169,6 +197,18 @@ def test_delta_across_two_real_days_is_in_window_changelog():
     out = bd.render_delta(delta)
     assert "in-window" in out
     assert "nothing resurfaced" in out
+
+
+def test_first_run_is_baseline_not_all_new():
+    today = snapshot("2026-06-09", [item("https://example.com/a", 90), item("https://example.com/b", 80)])
+    delta = bd.make_delta(today, bd.StoreLoad((), 0, ()), 5)
+    assert delta.regime == "baseline"
+    assert delta.prior_date is None
+    assert delta.gap_days is None
+    assert delta.classes == {bd.NEW: [], bd.MOVED: [], bd.RESOLVED: [], bd.UNCHANGED: []}
+    out = bd.render_delta(delta)
+    assert "baseline — no prior snapshot" in out
+    assert "⭐ NEW" not in out
 
 
 def test_resolved_does_not_flood_from_old_store():
@@ -253,6 +293,18 @@ def test_render_real_pair_smoke():
     assert "https://x.com/kocer_eth/status/2071288514608800108" in out
     assert "↕ MOVED" not in out
     assert "unchanged (carried over)" not in out
+
+
+def test_render_header_names_prior_gap_regime_and_index_count():
+    prior_old = snapshot("2026-06-01", [item("https://example.com/old", 70)])
+    prior = snapshot("2026-06-08", [item("https://example.com/yesterday", 80)])
+    today = snapshot("2026-06-09", [item("https://example.com/today", 90)])
+    delta = bd.make_delta(today, bd.StoreLoad((prior_old, prior), 2, ()), 5)
+    first_line = bd.render_delta(delta).splitlines()[0]
+    assert "prior 2026-06-08" in first_line
+    assert "gap 1d" in first_line
+    assert "in-window" in first_line
+    assert "index folded 2 of 2 snapshots" in first_line
 
 
 def test_render_no_crash_on_markdown_newlines():

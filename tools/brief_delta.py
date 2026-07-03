@@ -119,7 +119,7 @@ def _item_from_raw(raw: dict[str, Any], section: str, idx: int) -> Item:
                 source=source.strip(), section=section, title=_title_for(raw), raw=dict(raw))
 
 
-def flatten_source_doc(doc: dict[str, Any]) -> tuple[date, tuple[Item, ...]]:
+def flatten_source_doc(doc: dict[str, Any], fallback_date: date | None = None) -> tuple[date, tuple[Item, ...]]:
     if not isinstance(doc, dict):
         raise LivenessError("source JSON must be an object")
     if "selected" not in doc or "also" not in doc:
@@ -129,12 +129,15 @@ def flatten_source_doc(doc: dict[str, Any]) -> tuple[date, tuple[Item, ...]]:
     if not isinstance(selected, list) or not isinstance(also, list):
         raise LivenessError("selected and also must be lists")
     ts = doc.get("ts")
-    if not isinstance(ts, str) or len(ts) < 10:
+    if isinstance(ts, str) and len(ts) >= 10:
+        try:
+            brief_date = _parse_date(ts)
+        except ValueError as exc:
+            raise LivenessError(f"source missing parseable ts: {exc}") from None
+    elif fallback_date is not None:
+        brief_date = fallback_date
+    else:
         raise LivenessError("source missing parseable ts")
-    try:
-        brief_date = _parse_date(ts)
-    except ValueError as exc:
-        raise LivenessError(f"source missing parseable ts: {exc}") from None
     items = []
     for idx, raw in enumerate(selected):
         items.append(_item_from_raw(raw, "selected", idx))
@@ -153,11 +156,12 @@ def load_source(path: str | pathlib.Path) -> Snapshot:
         raise LivenessError("source is not a regular file")
     try:
         doc = json.loads(p.read_text(encoding="utf-8"))
+        fallback_date = datetime.fromtimestamp(p.stat().st_mtime).date()
     except json.JSONDecodeError as exc:
         raise LivenessError(f"source is not valid JSON: {exc.msg}") from None
     except OSError as exc:
         raise LivenessError(f"source unreadable: {exc}") from None
-    brief_date, items = flatten_source_doc(doc)
+    brief_date, items = flatten_source_doc(doc, fallback_date)
     return Snapshot(brief_date, items, p)
 
 
@@ -290,7 +294,7 @@ def classify(today: tuple[Item, ...], index: dict[str, PriorRef], immediate_prio
             out[NEW].append(item)
             continue
         score_delta = abs(item.score - prior.item.score)
-        if item.section != prior.item.section or score_delta > move_threshold:
+        if item.section != prior.item.section or score_delta >= move_threshold:
             out[MOVED].append((item, prior))
         else:
             out[UNCHANGED].append((item, prior))
@@ -467,7 +471,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state-dir", type=pathlib.Path, default=DEFAULT_STATE_DIR,
                    help="brief_delta snapshot store")
     p.add_argument("--move-threshold", type=int, default=DEFAULT_MOVE_THRESHOLD,
-                   help="score delta strictly greater than this marks MOVED")
+                   help="score delta greater than or equal to this marks MOVED")
     p.add_argument("--retention-days", type=int, default=DEFAULT_RETENTION_DAYS,
                    help="rolling snapshot retention window")
     p.add_argument("--render", action="store_true", help="render the delta (default action)")
