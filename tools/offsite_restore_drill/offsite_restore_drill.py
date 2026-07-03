@@ -23,7 +23,7 @@ import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 DEFAULT_REMOTE = "fleet-offsite2:"
 DEFAULT_AGENT = "apollo"
@@ -80,26 +80,44 @@ def remote_join(remote: str, *parts: str) -> str:
     return base + "/" + clean
 
 
+def _resolve_one_rclone(candidate: str, env: Mapping[str, str]) -> Optional[str]:
+    """Resolve a single rclone candidate (bare name via PATH, or a path) to an
+    executable, or None if it does not resolve to an executable file."""
+    if os.sep not in candidate:
+        found = shutil.which(candidate, path=env.get("PATH"))
+        if found:
+            return str(pathlib.Path(found).resolve())
+        for entry in (env.get("PATH") or os.defpath).split(os.pathsep):
+            path_candidate = pathlib.Path(entry) / candidate
+            if path_candidate.exists() and path_candidate.stat().st_mode & (
+                stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+            ):
+                return str(path_candidate.resolve())
+        return None
+    path = pathlib.Path(candidate).expanduser()
+    if path.exists() and path.stat().st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+        return str(path.resolve())
+    return None
+
+
 def resolve_rclone(explicit: Optional[str], environ: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """Resolve the rclone binary.
+
+    An EXPLICIT --rclone-bin is authoritative: if it is provided but does not
+    resolve to an executable, resolution fails (None) — it must NOT silently
+    fall back to RCLONE_BIN or a PATH-discovered rclone, or a caller that named
+    a specific (missing) binary would unknowingly run a different one. Only when
+    no explicit binary is given do we fall back to RCLONE_BIN, then PATH.
+    """
     env = environ if environ is not None else os.environ
-    candidates = [explicit, env.get("RCLONE_BIN"), shutil.which("rclone", path=env.get("PATH"))]
-    for candidate in candidates:
+    if explicit:
+        return _resolve_one_rclone(explicit, env)
+    for candidate in (env.get("RCLONE_BIN"), shutil.which("rclone", path=env.get("PATH"))):
         if not candidate:
             continue
-        if os.sep not in candidate:
-            found = shutil.which(candidate, path=env.get("PATH"))
-            if found:
-                return str(pathlib.Path(found).resolve())
-            for entry in (env.get("PATH") or os.defpath).split(os.pathsep):
-                path_candidate = pathlib.Path(entry) / candidate
-                if path_candidate.exists() and path_candidate.stat().st_mode & (
-                    stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-                ):
-                    return str(path_candidate.resolve())
-            continue
-        path = pathlib.Path(candidate).expanduser()
-        if path.exists() and path.stat().st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
-            return str(path.resolve())
+        resolved = _resolve_one_rclone(candidate, env)
+        if resolved:
+            return resolved
     return None
 
 

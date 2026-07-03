@@ -1,3 +1,60 @@
+# brief-delta — Reversibility & Operations
+
+**Status:** v0.3 reduced standalone read-side delta tool, **off by default.**
+
+## What it is
+A stdlib-only Python 3.11 tool that reads the morning-digest structured
+`_render_input.json`, builds a bounded local snapshot store, folds the retained
+store into a last-seen URL index, and prints NEW / MOVED / RESOLVED /
+UNCHANGED. MOVED is local and deterministic: same URL seen earlier in the
+retained store with a section change or score movement at/above
+`--move-threshold` (default 5). RESOLVED stays scoped to the immediate prior
+snapshot so old history does not flood the dropped-off lane. It does not post to
+Discord, edit the producer, or wire itself into cron.
+
+## Reversibility
+
+This tool is reversible by construction.
+
+- **Off by default.** Nothing runs on import. No cron, daemon, launchd job, or
+  scheduler entry is installed or enabled by this build. A human must invoke the
+  tool explicitly.
+- **State it touches:** only JSON snapshots under the caller-selected
+  `--state-dir` (default `~/.hermes/greenhouse/brief_delta/`). It reads the
+  producer's `_render_input.json` but never mutates it. It never touches
+  `ai-news-seen.json`, Discord, cron, prompts, or any shared producer state.
+- **Bounded store.** After each render run it prunes `snapshot-YYYY-MM-DD.json`
+  files to `--retention-days` (default 35), keeping the newest snapshot. The
+  reduced delta folds all retained snapshots older than today into the last-seen
+  index, while RESOLVED compares only against the immediate prior valid
+  snapshot. This keeps the nightly floor deterministic and bounded.
+- **Uninstall / rollback = delete files.** To remove completely:
+  1. Remove state if desired: `rm -rf ~/.hermes/greenhouse/brief_delta/`.
+  2. Remove the tool and tests: `rm -f tools/brief_delta.py tests/test_brief_delta.py`.
+  3. Remove captured fixtures if desired: `rm -rf tests/fixtures/`.
+  4. If a later version adds a scheduler/cron entry, remove that entry too.
+  Nothing else was touched. There is no migration to undo and no remote change
+  to revert.
+
+## Health & liveness probes (NOT the same thing)
+- **`--selfcheck`** — offline deploy health probe. Builds its own synthetic
+  immediate-prior fixture, reads no real source, and exits `0` only if
+  NEW/MOVED/RESOLVED/UNCHANGED classify correctly behind a 1-day-old prior.
+- **`--check-target`** — real-source liveness gate. Asserts the configured
+  `_render_input.json` exists, is a regular file, parses as JSON, has selected
+  and also lists, and contains at least one item with a URL. It exits non-zero
+  with `LIVENESS FAILURE` on missing/empty/malformed input, so "read nothing"
+  cannot be a silent success.
+
+## Usage
+```
+python -m tools.brief_delta --selfcheck
+python -m tools.brief_delta --check-target
+python -m tools.brief_delta --source ~/.hermes/state/cron/morning-digest/_render_input.json --state-dir ~/.hermes/greenhouse/brief_delta/
+```
+
+---
+
 # triage-rule-miner — Reversibility & Operations
 
 **Status:** v0.1, propose-only, **off by default.**
