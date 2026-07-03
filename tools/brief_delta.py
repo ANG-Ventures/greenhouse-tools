@@ -323,7 +323,7 @@ def _regime(prior: Snapshot | None, today_date: date, corrupt_prior: bool) -> tu
 def make_delta(today: Snapshot, store_load: StoreLoad, move_threshold: int = DEFAULT_MOVE_THRESHOLD) -> Delta:
     corrupt_prior = find_corrupt_immediate_prior(store_load.corrupt, store_load.snapshots, today.brief_date)
     if corrupt_prior is not None:
-        classes = {NEW: [], MOVED: [], RESOLVED: [], UNCHANGED: []}
+        classes: dict[str, list] = {NEW: [], MOVED: [], RESOLVED: [], UNCHANGED: []}
         return Delta(today.brief_date, None, None, "corrupt-prior", 0, store_load.total_files,
                      True, corrupt_prior[1], len(store_load.corrupt), classes)
     index = build_last_seen_index(store_load.snapshots, today.brief_date)
