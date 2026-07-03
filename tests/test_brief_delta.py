@@ -170,21 +170,25 @@ def test_moved_fires_on_section_change_without_score_change():
 def test_moved_fires_under_nightly_cadence():
     real = load_fixture(JUL03).items[0]
     stable = load_fixture(JUL03).items[1]
-    prior = bd.Snapshot(bd.date(2026, 7, 2), (
+    old = bd.Snapshot(bd.date(2026, 6, 24), (
         item(real.url, real.score, real.section, real.title, real.source),
         item(stable.url, stable.score, stable.section, stable.title, stable.source),
+    ))
+    prior = bd.Snapshot(bd.date(2026, 7, 2), (
+        item("https://example.com/yesterday", 60),
     ))
     today = bd.Snapshot(bd.date(2026, 7, 3), (
         item(real.url, real.score + 10, real.section, real.title, real.source),
         item(stable.url, stable.score, stable.section, stable.title, stable.source),
         item("https://example.com/new", 99),
     ))
-    delta = bd.make_delta(today, bd.StoreLoad((prior,), 1, ()), 5)
+    delta = bd.make_delta(today, bd.StoreLoad((old, prior), 2, ()), 5)
     assert delta.gap_days == 1
     assert delta.regime == "in-window"
     assert [r[0].url for r in delta.classes[bd.MOVED]] == [real.url]
     assert [r[0].url for r in delta.classes[bd.UNCHANGED]] == [stable.url]
     assert [i.url for i in delta.classes[bd.NEW]] == ["https://example.com/new"]
+    assert [i.url for i in delta.classes[bd.RESOLVED]] == ["https://example.com/yesterday"]
 
 
 def test_delta_across_two_real_days_is_in_window_changelog():
@@ -239,11 +243,12 @@ def test_index_reads_across_full_retention():
     today = bd.Snapshot(bd.date(2026, 7, 1), (item(recurring, 70),))
     delta = bd.make_delta(today, bd.StoreLoad(store, 2, ()), 5)
     assert delta.gap_days == 1
-    assert delta.classes[bd.MOVED] == []
-    assert [i.url for i in delta.classes[bd.NEW]] == [recurring]
+    assert [r[0].url for r in delta.classes[bd.MOVED]] == [recurring]
+    assert delta.classes[bd.NEW] == []
     assert [i.url for i in delta.classes[bd.RESOLVED]] == ["https://example.com/yesterday"]
 
-def test_delta_only_uses_yesterday_for_moved_not_full_retention():
+
+def test_resolved_only_uses_yesterday_not_full_retention():
     recurring = "https://example.com/retained"
     store = (
         snapshot("2026-06-01", [item(recurring, 50)]),
@@ -251,8 +256,8 @@ def test_delta_only_uses_yesterday_for_moved_not_full_retention():
     )
     today = bd.Snapshot(bd.date(2026, 7, 1), (item(recurring, 70),))
     delta = bd.make_delta(today, bd.StoreLoad(store, 2, ()), 5)
-    assert delta.classes[bd.MOVED] == []
-    assert [i.url for i in delta.classes[bd.NEW]] == [recurring]
+    assert [i.url for i in delta.classes[bd.RESOLVED]] == ["https://example.com/yesterday"]
+    assert recurring not in [i.url for i in delta.classes[bd.RESOLVED]]
 
 
 # --- store, retention, render ------------------------------------------------
@@ -348,7 +353,7 @@ def test_render_header_names_prior_gap_regime_and_index_count():
     assert "prior 2026-06-08" in first_line
     assert "gap 1d" in first_line
     assert "in-window" in first_line
-    assert "index folded 1 of 2 snapshots" in first_line
+    assert "index folded 2 of 2 snapshots" in first_line
 
 
 def test_render_no_crash_on_markdown_newlines():

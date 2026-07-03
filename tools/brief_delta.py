@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """brief_delta -- small offline delta layer for the Greenhouse morning brief.
 
-Reduced core: read the structured render input, keep dated JSON snapshots, and
-render only immediate-prior NEW / MOVED / RESOLVED / UNCHANGED counts. No network, no
-producer mutation, stdlib only. ``--selfcheck`` is an offline logic probe;
-``--check-target`` is the real-source liveness gate.
+Reduced core: read the structured render input, keep dated JSON snapshots, fold
+the retained store into a last-seen URL index for NEW / MOVED / UNCHANGED, and
+use the immediate prior only for RESOLVED. No network, no producer mutation,
+stdlib only. ``--selfcheck`` is an offline logic probe; ``--check-target`` is
+the real-source liveness gate.
 """
 from __future__ import annotations
 
@@ -334,12 +335,12 @@ def make_delta(today: Snapshot, store_load: StoreLoad, move_threshold: int = DEF
         return Delta(today.brief_date, None, None, "corrupt-prior", 0, store_load.total_files, True, corrupt_prior[1], len(store_load.corrupt), classes)
 
     immediate = find_immediate_prior(store_load.snapshots, today.brief_date)
-    index = build_last_seen_index((immediate,) if immediate is not None else (), today.brief_date)
+    index = build_last_seen_index(store_load.snapshots, today.brief_date)
     classes = classify(today.items, index, immediate, move_threshold)
     regime, gap, prior_date = _regime(immediate, today.brief_date, False)
     if regime == "baseline":
         classes = {NEW: [], MOVED: [], RESOLVED: [], UNCHANGED: []}
-    folded = 1 if immediate is not None else 0
+    folded = sum(1 for snap in store_load.snapshots if snap.brief_date < today.brief_date)
     return Delta(today.brief_date, prior_date, gap, regime, folded, store_load.total_files, False, None, len(store_load.corrupt), classes)
 
 
@@ -434,21 +435,26 @@ def _synthetic_item(url: str, score: int, section: str = "selected", title: str 
 
 def run_selfcheck() -> int:
     prior = Snapshot(date(2026, 7, 2), (
-        _synthetic_item("https://example.com/stable", 70),
         _synthetic_item("https://example.com/gone", 60),
+    ))
+    old = Snapshot(date(2026, 6, 24), (
+        _synthetic_item("https://example.com/stable", 70),
+        _synthetic_item("https://example.com/unchanged", 55),
     ))
     today = Snapshot(date(2026, 7, 3), (
         _synthetic_item("https://example.com/stable/", 75),
+        _synthetic_item("https://example.com/unchanged", 55),
         _synthetic_item("https://example.com/new", 90),
     ))
-    delta = make_delta(today, StoreLoad((prior,), 1, ()), DEFAULT_MOVE_THRESHOLD)
+    delta = make_delta(today, StoreLoad((old, prior), 2, ()), DEFAULT_MOVE_THRESHOLD)
     ok = (
         delta.regime == "in-window"
         and len(delta.classes[NEW]) == 1
         and len(delta.classes[MOVED]) == 1
         and len(delta.classes[RESOLVED]) == 1
-        and len(delta.classes[UNCHANGED]) == 0
-        and "counts: 1 new | 1 moved | 1 resolved | 0 unchanged" in render_delta(delta)
+        and len(delta.classes[UNCHANGED]) == 1
+        and delta.gap_days == 1
+        and "counts: 1 new | 1 moved | 1 resolved | 1 unchanged" in render_delta(delta)
     )
     if not ok:
         print("SELFCHECK FAIL: reduced immediate-delta fixture did not classify as expected", file=sys.stderr)

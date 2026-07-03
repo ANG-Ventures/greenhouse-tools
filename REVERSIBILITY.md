@@ -4,11 +4,13 @@
 
 ## What it is
 A stdlib-only Python 3.11 tool that reads the morning-digest structured
-`_render_input.json`, builds a bounded local snapshot store, and prints the
-small immediate-prior core: NEW / MOVED / RESOLVED / UNCHANGED. MOVED is local
-and deterministic: same URL as yesterday with a section change or score movement
-at/above `--move-threshold` (default 5). It does not post to Discord,
-edit the producer, or wire itself into cron.
+`_render_input.json`, builds a bounded local snapshot store, folds the retained
+store into a last-seen URL index, and prints NEW / MOVED / RESOLVED /
+UNCHANGED. MOVED is local and deterministic: same URL seen earlier in the
+retained store with a section change or score movement at/above
+`--move-threshold` (default 5). RESOLVED stays scoped to the immediate prior
+snapshot so old history does not flood the dropped-off lane. It does not post to
+Discord, edit the producer, or wire itself into cron.
 
 ## Reversibility
 
@@ -23,8 +25,9 @@ This tool is reversible by construction.
   `ai-news-seen.json`, Discord, cron, prompts, or any shared producer state.
 - **Bounded store.** After each render run it prunes `snapshot-YYYY-MM-DD.json`
   files to `--retention-days` (default 35), keeping the newest snapshot. The
-  reduced delta compares only against the immediate prior valid snapshot, which
-  keeps the nightly floor deterministic and easy to inspect.
+  reduced delta folds all retained snapshots older than today into the last-seen
+  index, while RESOLVED compares only against the immediate prior valid
+  snapshot. This keeps the nightly floor deterministic and bounded.
 - **Uninstall / rollback = delete files.** To remove completely:
   1. Remove state if desired: `rm -rf ~/.hermes/greenhouse/brief_delta/`.
   2. Remove the tool and tests: `rm -f tools/brief_delta.py tests/test_brief_delta.py`.
