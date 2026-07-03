@@ -1,0 +1,84 @@
+{
+  "ts": "2026-07-03T03:47:08.512890",
+  "selected": [
+    {
+      "score": 94,
+      "url": "https://x.com/emollick/status/2072872373758382497",
+      "event_key": "fable-last-first-men-out-copyright",
+      "source": "X",
+      "authorHandle": "emollick",
+      "tweet_text": "Fable: \"Last and First Men is out of copyright. I want you to make a movie that features a reading of it with appropriate mixes of animation and images using access to the APIs you have (elevenlabs, hugging face) . Give me the first 10-15 minutes, ending at an appropriate break.\" https://t.co/mmmY8Ycy6b",
+      "likes": 481,
+      "retweets": 30
+    },
+    {
+      "score": 83,
+      "url": "https://github.com/openai/codex-plugin-cc",
+      "event_key": "openai-codex-plugin-cc",
+      "source": "github",
+      "title": "openai/codex-plugin-cc",
+      "summary": "openai/codex-plugin-cc packages Use Codex from Claude Code to review code or delegate tasks.; GitHub shows 352 stars today.",
+      "authorHandle": "openai",
+      "stars_today": 352
+    },
+    {
+      "score": 79,
+      "url": "https://www.buildfastwithai.com/blogs/ai-news-today-july-3-2026",
+      "event_key": "july-third-news-stories-roundup",
+      "source": "Perplexity",
+      "title": "AI News Today July 3 2026: 15 Biggest Stories",
+      "summary": "Reuters confirmed on July 2 that Google is among the companies in talks, specifically ahead of its planned advanced coding model releases (Gemini 3.5 Pro, expected in July). ..."
+    },
+    {
+      "score": 79,
+      "url": "https://www.wired.com/story/cusor-launches-coding-agent-openai-anthropic",
+      "event_key": "cursor-launches-ai-agent-experience-take-claude-code",
+      "source": "Perplexity",
+      "title": "Cursor Launches a New AI Agent Experience to Take On Claude Code and Codex",
+      "summary": "On Thursday, Cursor unveiled Cursor 3, a novel product interface designed to enable users to deploy AI coding agents to accomplish tasks on their behalf."
+    },
+    {
+      "score": 77,
+      "url": "https://www.reddit.com/r/LLMDevs/comments/1ulose2/chimera_opensource_apache20_an_agent_whose",
+      "event_key": "chimera-open-source-apache-2-0-agent-whose",
+      "source": "reddit",
+      "title": "Chimera (open-source, Apache-2.0): an agent whose reasoning core is an LLM-fusion panel -> judge -> synthesizer, behind a cost-aware router",
+      "summary": "Open-source (Apache-2.0), no product behind it - just sharing something I built and looking for technical feedback.",
+      "authorHandle": "u/Federal-Teaching2800"
+    }
+  ],
+  "also": [
+    {
+      "score": 77,
+      "url": "https://www.reddit.com/r/LLMDevs/comments/1ul9800/opensource_localfirst_observability_for_mcp",
+      "event_key": "open-source-local-first-observability-mcp-agents-trace",
+      "source": "reddit",
+      "title": "Open-source, local-first observability for MCP agents — trace, replay against another model, and diff the decisions",
+      "summary": "Agents are black boxes when they go wrong. agentsense captures what an agent actually did and lets you replay it — all locally.",
+      "authorHandle": "u/Legitimate_Bath_8866"
+    },
+    {
+      "score": 77,
+      "url": "https://www.morphllm.com/ai-agent-framework",
+      "event_key": "ai-agent-frameworks-2026-update-8-sdks-compared",
+      "source": "Perplexity",
+      "title": "AI Agent Frameworks (2026 Update): 8 SDKs Compared + the ...",
+      "summary": "Microsoft Agent Framework 1.0 went GA on April 3, 2026, merging AutoGen and Semantic Kernel into one .NET and Python SDK. ..."
+    }
+  ],
+  "footer": "📡 314 scanned · 264 new · 50 filtered\n📥 Reddit 125 · X 119 · HN 30 · GitHub 20 · Latent Space 10 · Perplexity 10\n⚙️ deterministic scoring · personal-fit ✓",
+  "empty_note": null,
+  "_select_audit": {
+    "pool": 264,
+    "selected": 5,
+    "also": 2,
+    "discarded_bare": 33,
+    "discarded_below_gate": 172,
+    "discarded_event_dup": 51,
+    "discarded_author_cap": 1,
+    "low_reach_capped": 0,
+    "unsourced_items": 0,
+    "boost_gated_off_topic": []
+  },
+  "overview": "🗞️ **The Landscape**\nThe day’s center of gravity moved from “which model wins?” to “who gets to wire the model into work?” Qu Xiaoyin framed the strategic anxiety bluntly: weak U.S. open-source options leave American enterprises choosing between Chinese weights and the OpenAI/Anthropic stack [[3]](https://x.com/quxiaoyin/status/2072925625791520781), while the toolchain news kept saying the same thing from the builder side. OpenAI’s Codex-to-Claude Code bridge, Safari’s MCP server, and Chrome-adjacent automation work all pushed toward agents that can actually touch the surfaces developers live in, not just answer prompts [[4]](https://github.com/openai/codex-plugin-cc)[[8]](https://webkit.org/blog/18136/introducing-the-safari-mcp-server-for-web-developers). Even Ethan Mollick’s Fable thread fit the mood: public-domain culture is becoming substrate for AI-native studios, not just fodder for demos [[1]](https://x.com/emollick/status/2072872373758382497). It was a build-day with a policy hangover — less benchmark theater, more connective tissue.\n\n• **Agent infrastructure** — Chimera’s open-source router wraps multiple LLMs behind judge-and-synthesizer logic, turning “model choice” into a runtime policy problem [[9]](https://www.reddit.com/r/LLMDevs/comments/1ulose2/chimera_opensource_apache20_an_agent_whose).\n• **Developer surfaces** — Safari MCP and Codex-plugin-cc show Apple, OpenAI, and Anthropic ecosystems converging around controllable local tooling.\n• **Work-role collapse** — Nesfield’s marketer/developer point landed because AI is turning campaign execution, app scaffolding, and product iteration into the same workflow [[2]](https://x.com/TheRealNesfield/status/2072778857426682352).\n\nMood: pragmatic, slightly uneasy, and very “ship the bridge before the platform war settles.”"
+}

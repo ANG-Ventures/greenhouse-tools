@@ -1,3 +1,56 @@
+# brief-delta — Reversibility & Operations
+
+**Status:** v0.1 standalone read-side delta tool, **off by default.**
+
+## What it is
+A stdlib-only Python 3.11 tool that reads the morning-digest structured
+`_render_input.json`, builds a bounded local snapshot store, and prints a
+NEW/RESOLVED/MOVED/UNCHANGED delta-led text view. It does not post to Discord,
+edit the producer, or wire itself into cron.
+
+## Reversibility
+
+This tool is reversible by construction.
+
+- **Off by default.** Nothing runs on import. No cron, daemon, launchd job, or
+  scheduler entry is installed or enabled by this build. A human must invoke the
+  tool explicitly.
+- **State it touches:** only JSON snapshots under the caller-selected
+  `--state-dir` (default `~/.hermes/greenhouse/brief_delta/`). It reads the
+  producer's `_render_input.json` but never mutates it. It never touches
+  `ai-news-seen.json`, Discord, cron, prompts, or any shared producer state.
+- **Bounded store.** After each render run it prunes `snapshot-YYYY-MM-DD.json`
+  files to `--retention-days` (default 35), keeping the newest snapshot. The
+  retained history is load-bearing: the last-seen index folds the retained store
+  so a URL recurrence after the producer's 7-day dedup window can classify as
+  MOVED/UNCHANGED under normal nightly cadence.
+- **Uninstall / rollback = delete files.** To remove completely:
+  1. Remove state if desired: `rm -rf ~/.hermes/greenhouse/brief_delta/`.
+  2. Remove the tool and tests: `rm -f tools/brief_delta.py tests/test_brief_delta.py`.
+  3. Remove captured fixtures if desired: `rm -rf tests/fixtures/`.
+  4. If a later version adds a scheduler/cron entry, remove that entry too.
+  Nothing else was touched. There is no migration to undo and no remote change
+  to revert.
+
+## Health & liveness probes (NOT the same thing)
+- **`--selfcheck`** — offline deploy health probe. Builds its own synthetic
+  nightly-cadence fixture, reads no real source, and exits `0` only if
+  NEW/RESOLVED/MOVED/UNCHANGED all classify correctly behind a 1-day-old prior.
+- **`--check-target`** — real-source liveness gate. Asserts the configured
+  `_render_input.json` exists, is a regular file, parses as JSON, has selected
+  and also lists, and contains at least one item with a URL. It exits non-zero
+  with `LIVENESS FAILURE` on missing/empty/malformed input, so "read nothing"
+  cannot be a silent success.
+
+## Usage
+```
+python -m tools.brief_delta --selfcheck
+python -m tools.brief_delta --check-target
+python -m tools.brief_delta --source ~/.hermes/state/cron/morning-digest/_render_input.json --state-dir ~/.hermes/greenhouse/brief_delta/
+```
+
+---
+
 # triage-rule-miner — Reversibility & Operations
 
 **Status:** v0.1, propose-only, **off by default.**

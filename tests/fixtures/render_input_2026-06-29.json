@@ -1,0 +1,85 @@
+{
+  "ts": "2026-06-29T03:41:27.256635",
+  "selected": [
+    {
+      "score": 90,
+      "url": "https://x.com/kocer_eth/status/2071288514608800108",
+      "event_key": "guy-showed-codex-subagent-flow-finishing-apps-20x",
+      "source": "X",
+      "authorHandle": "kocer_eth",
+      "tweet_text": "THIS GUY SHOWED THE CODEX SUBAGENT FLOW FOR FINISHING APPS 20X FASTER\n\nThe useful part is not “AI writes code.”\n\nIt is the shape of the prompt.\n\nMost people use Codex like this:\n\none chat,\none task,\none thread,\nthen you personally remember the UI bugs, product logic, copy, assets, routes, and launch problems.\n\nThat is still you operating the project.\n\nThe video shows a cleaner pattern:\n\nmake Codex the operator.\n\nThe user becomes the president.\nThe main Codex thread becomes the VP.\nThe subagents become employees.\n\nThe flow is simple:\n\nask Codex to open multiple threads,\nhave each one inspect a different part of the app,\nput the main agent in charge,\nopen the dev server,\nlet the subagents report back,\nthen have the main thread synthesize the product.\n\nThat is the part builders should steal.\n\nNot the exact wording.\nThe org chart.\n\nOne subagent can look at UI states.\nOne can check backend logic.\nOne can clean copy.\nOne can inspect assets.\nOne can look at the launch path.\n\nThe win is fewer context collisions.\n\nInstead of forcing one chat to hold the entire app in its head forever, you split the app into smaller jobs and make the main agent merge the results.\n\nCaveat:\n\nthis does not replace taste.\n\nIf the spec is vague, you just get vague work in parallel.\n\nBut if you already know what the app needs to become, this is the move from vibe coding to something closer to managing a tiny project team inside Codex.",
+      "likes": 49,
+      "retweets": 8
+    },
+    {
+      "score": 80,
+      "url": "https://github.com/browser-use/video-use",
+      "event_key": "browser-use-video-use",
+      "source": "github",
+      "title": "browser-use/video-use",
+      "summary": "Edit videos with coding agents Trending added 196 stars today.",
+      "authorHandle": "browser-use",
+      "stars_today": 196
+    },
+    {
+      "score": 77,
+      "url": "https://github.com/Zijian-Ni/awesome-ai-agents-2026",
+      "event_key": "zijian-ni-awesome-ai-agents-2026-github",
+      "source": "perplexity",
+      "title": "Zijian-Ni/awesome-ai-agents-2026 - GitHub",
+      "summary": "OpenAI's new frontier model for agentic tasks: coding, online research, data analysis, autonomous tool navigation. ... - GPT-5.3 - Early 2026. Includes GPT-5.3 Instant (conversations) and GPT-5.3-Codex (coding). ... - Claude Opus 4.7 - 🆕 Released April 16, 2026. ..."
+    },
+    {
+      "score": 76,
+      "url": "https://www.youtube.com/watch?v=d0uFDa57D1k",
+      "event_key": "grok-4-just-shattered-everything-we-knew-about",
+      "source": "perplexity",
+      "title": "Grok 4 Just Shattered Everything We Knew About AI (The ... - YouTube",
+      "summary": "Within hours, cursor added Gro 4 to their platform. ... The coding specific version isn't even released yet. That's coming next month."
+    },
+    {
+      "score": 74,
+      "url": "https://www.reddit.com/r/singularity/comments/1uh9d42/whats_separating_open_source_mainly_chinese_labs/",
+      "event_key": "what-s-separating-open-source-mainly-chinese-labs",
+      "source": "reddit",
+      "title": "what's separating open source (mainly Chinese) labs from the frontier labs?",
+      "summary": "As we all know, all the big closed source labs like (OpenAI, Anthropic, and etc) always seem to be around ~6-12 months ahead of all the major open source labs. What is the genuine reason behind this?",
+      "authorHandle": "u/Crazyscientist1024"
+    }
+  ],
+  "also": [
+    {
+      "score": 74,
+      "url": "https://fazm.ai/t/new-ai-model-releases-papers-open-source-june-12-13-2026",
+      "event_key": "ai-model-releases-papers-open-source-june-12",
+      "source": "perplexity",
+      "title": "New AI model releases, papers, and open source on June 12-13 ...",
+      "summary": "fazm.ai surfaced this fresh AI/building item — use the source link to verify the concrete release details."
+    },
+    {
+      "score": 73,
+      "url": "https://semgrep.dev/blog/2026/we-have-mythos-at-home-glm-52-beats-claude-in-our-cyber-benchmarks/",
+      "event_key": "glm-5-2-beats-claude-our-benchmarks",
+      "source": "HN",
+      "title": "GLM 5.2 beats Claude in our benchmarks",
+      "summary": "HN front page is debating GLM 5.2 beats Claude in our benchmarks — 867 points and 402 comments make this worth scanning for implementation gotchas.",
+      "hn_points": 867,
+      "hn_comments": 402
+    }
+  ],
+  "footer": "📡 269 scanned · 230 new · 39 filtered\n📥 X 116 · Reddit 100 · HN 30 · GitHub 13 · Perplexity 10\n⚙️ deterministic scoring · personal-fit ✓",
+  "empty_note": null,
+  "_select_audit": {
+    "pool": 231,
+    "selected": 5,
+    "also": 2,
+    "discarded_bare": 20,
+    "discarded_below_gate": 137,
+    "discarded_event_dup": 67,
+    "discarded_author_cap": 0,
+    "low_reach_capped": 0,
+    "unsourced_items": 0,
+    "boost_gated_off_topic": []
+  },
+  "overview": "🗞️ **The Landscape**\nToday’s AI-builder feed concentrated on Models, Coding Agents, and OpenAI, with the strongest items skewing toward things that shipped, benchmarked, or exposed real implementation detail. Yes, Paolo is mostly right — with important nuance. [[1]](https://x.com/Doge4Faithful/status/2071506109068619946) 1. 🏛️ White House Imposes Strict Access Controls on OpenAI's GPT-5.6…. [[2]](https://x.com/santhoshramesh/status/2071348728037007554) Has officially entered the era of 10B+ daily Token…. [[3]](https://x.com/VKESH_AD/status/2071516627141570953) 🧵 $Voicebox Thesis: The local voice layer the AI era actually needs. [[4]](https://x.com/_0xReaper/status/2071313300625764484)\n• **Models** — EPIS CLOUD AI will officially launch ECAI V1 Public Beta On 30 June 2026….\n• **Coding Agents** — Open Source Release 🚀 GenLayer Labs launched Unhardcoded an open-source….\n• **OpenAI** — NVIDIA [@nvidia](https://x.com/nvidia) read the future and is giving [@AnthropicAI](https://x.com/AnthropicAI) and [@OpenAI](https://x.com/OpenAI) the…."
+}
