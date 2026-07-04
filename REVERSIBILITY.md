@@ -406,3 +406,50 @@ This tool is reversible by construction.
     python -m tools.alias_expand --selfcheck                                        # deploy probe
     python -m tools.alias_expand --check-target --capabilities-dir /path/to/capabilities  # nightly gate
     python -m tools.alias_expand --capabilities-dir /path/to/capabilities           # emit expanded aliases
+
+
+---
+
+# vault_ribbon — Reversibility & Operations
+
+**Status:** v0.1 proof-of-concept, read-only annotator, **off by default.**
+
+## What it is
+A stdlib-only Python 3.11 tool that reads a RAG `/query` JSON response, builds a
+local exact filename-stem index over an Obsidian vault, and adds per-chunk
+`vault` metadata showing whether a canonical note title exists and whether that
+note is newer than a caller-supplied `--asof` timestamp. It does not mutate RAG,
+Obsidian, ingestion, embeddings, or note content.
+
+## Reversibility
+
+This tool is reversible by construction.
+
+- **Off by default.** Nothing runs on import. No cron, daemon, launchd job, or
+  scheduler entry is installed or enabled by this build. A caller must invoke
+  `python -m tools.vault_ribbon` explicitly.
+- **State it touches: NONE.** It reads stdin and local vault filenames/mtimes,
+  writes annotated JSON to stdout, and writes liveness/errors/stats to stderr.
+  It creates no config, daemon, cache, DB, corpus rows, note edits, or RAG-side
+  state. The `--selfcheck` probe uses an OS temp dir that is removed on exit.
+- **Uninstall / rollback = delete files.** To remove completely:
+  `rm -rf tools/vault_ribbon tests/test_vault_ribbon.py tests/fixtures/rag_response_real.json`.
+  Nothing else was touched. There is no migration to undo and no remote change
+  to revert.
+
+## Health & liveness probes (NOT the same thing)
+- **`--selfcheck`** — offline logic probe. Builds its OWN temp fixture vault,
+  reads no real vault and performs no network calls. Exit `0` iff the annotation
+  logic is internally correct. A garbage/unknown flag exits non-zero via real
+  argparse dispatch.
+- **`--check-vault`** — real-target liveness gate. Asserts the configured actual
+  vault exists, is a directory, and contains at least one real `*.md` note after
+  dotdir exclusions. Loud non-zero `VAULT LIVENESS FAILED` otherwise, so "read
+  nothing" cannot be a silent success. The nightly entry should run this, not
+  `--selfcheck`.
+
+## Usage
+
+    python -m tools.vault_ribbon --selfcheck
+    python -m tools.vault_ribbon --check-vault
+    python -m tools.vault_ribbon --annotate --asof 2026-07-03T04:00:00-07:00 < rag_response.json

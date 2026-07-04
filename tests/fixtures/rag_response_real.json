@@ -1,0 +1,17 @@
+{
+  "chunks": [
+    {
+      "text": "Real captured shape sample: drive source with no Obsidian title twin.",
+      "title": "Computer Buying and Building",
+      "source_type": "drive",
+      "score": 0.34
+    },
+    {
+      "text": "Real captured shape sample: title known to have a vault twin for the acceptance fixture.",
+      "title": "Hardware",
+      "source_type": "obsidian",
+      "score": 0.82
+    }
+  ],
+  "sources": ["drive", "obsidian"]
+}
