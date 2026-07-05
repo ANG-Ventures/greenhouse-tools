@@ -406,3 +406,42 @@ This tool is reversible by construction.
     python -m tools.alias_expand --selfcheck                                        # deploy probe
     python -m tools.alias_expand --check-target --capabilities-dir /path/to/capabilities  # nightly gate
     python -m tools.alias_expand --capabilities-dir /path/to/capabilities           # emit expanded aliases
+---
+
+# pin-ai-models — Reversibility & Operations
+
+**Status:** v0.1 one-time path-policy tool, **off by default.**
+
+## What it is
+A stdlib-only Python 3.11 CLI that redirects local-AI model/cache default
+paths to `/Volumes/Models SSD 4TB/models/<runner>/` with symlinks and applies
+fixed-path Time Machine exclusions using `tmutil addexclusion -p`. It is not a
+daemon and does not migrate model bytes.
+
+## Reversibility
+
+- **Off by default.** Running without flags prints the resolved plan and makes
+  zero filesystem changes. Mutation requires `--apply`; rollback requires
+  `--undo`.
+- **State it touches:** the configured runner default dirs, the configured
+  external models root, Time Machine fixed-path exclusions for recorded targets,
+  and the JSON ledger at `~/.pin_ai_models/state.json` (or `--ledger`).
+- **Rollback / uninstall:** run `python -m tools.pin_ai_models.pin_ai_models --undo`
+  before deleting the tool. Undo removes symlinks the tool created, restores any
+  `.pin-bak` directory it moved aside, restores any foreign symlink to the
+  recorded prior target, and runs `tmutil removeexclusion -p` for recorded
+  targets. After `--undo`, delete `tools/pin_ai_models/`, `tests/pin_ai_models/`,
+  and `~/.pin_ai_models/` if desired.
+- **Important caveat:** deleting the ledger or tool directory alone does NOT
+  remove out-of-dir symlinks or Time Machine `-p` exclusions. “No trace” is only
+  true after `--undo` (or equivalent manual reversal from the ledger).
+- **Undo scope:** undo restores the internal path shape. It does not migrate
+  model files written to the external target while pinned; those remain on the
+  external SSD.
+
+## Health & liveness probes (NOT the same thing)
+- `--selfcheck` builds its own temp fixture and proves the logic offline. It
+  does not inspect the real 4TB SSD.
+- `--check-target` is the unprivileged nightly liveness probe. It checks the
+  actual volume/root, ledger-pinned symlinks, and `tmutil isexcluded` state.
+

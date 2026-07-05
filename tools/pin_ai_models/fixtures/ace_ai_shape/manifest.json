@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-07-05T00:00:00Z",
+  "captured_by": "tools/pin_ai_models/capture_ace_ai_shape.sh",
+  "captured_host": "Mac-Studio-M3U",
+  "models_root": "/Volumes/Models SSD 4TB/models",
+  "models_root_basename": "Models SSD 4TB",
+  "models_volume": "/Volumes/Models SSD 4TB",
+  "runners": {
+    "hf/mlx": {
+      "kind": "symlink",
+      "path": "/Users/alexgierczyk/.cache/huggingface",
+      "target": "/Volumes/Models SSD 4TB/models/hf-cache"
+    },
+    "lmstudio": {
+      "kind": "missing",
+      "path": "/Users/alexgierczyk/.cache/lm-studio/models"
+    },
+    "ollama": {
+      "kind": "symlink",
+      "path": "/Users/alexgierczyk/.ollama/models",
+      "target": "/models/models/ollama"
+    }
+  },
+  "schema": 1
+}
