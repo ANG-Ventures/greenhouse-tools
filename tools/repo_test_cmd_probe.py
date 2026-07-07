@@ -162,13 +162,18 @@ def is_prose_structured_command(line: str) -> bool:
     `pytest .` and `pytest -q` documented while rejecting `pytest is our runner`.
     """
     stripped = strip_prefix(line).strip("` ")
+    interior_sentence = INTERIOR_SENTENCE_RE.search(stripped)
+    if interior_sentence is not None:
+        first_sentence = stripped[: interior_sentence.start() + 1].rstrip(".!?")
+        if runner_span(tokenize_command(first_sentence)) is not None:
+            return True
     tokens = tokenize_command(stripped)
     span = runner_span(tokens)
     if span is None:
         return False
     after = tokens[span[1]:]
     bare_words = [_tok for _tok in after if _is_bare_english_arg(_tok)]
-    return len(bare_words) >= 2 or bool(INTERIOR_SENTENCE_RE.search(stripped))
+    return len(bare_words) >= 2 or interior_sentence is not None
 
 
 def is_documented_test_command_line(line: str) -> bool:
