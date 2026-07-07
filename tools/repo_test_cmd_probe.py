@@ -44,8 +44,8 @@ RUNNER_TOKENS = (
     ("make", "test"),
 )
 PREFIX_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|>\s*)?(?:[$#>]\s*)?")
-BARE_WORD_RE = re.compile(r"^[a-z]+$")
-INTERIOR_SENTENCE_RE = re.compile(r"[.!?]\s+[A-Za-z]")
+PROSE_BARE_WORD_RE = re.compile(r"^[a-z]+$")
+INTERIOR_SENTENCE_RE = re.compile(r"[A-Za-z][.!?]\s+[A-Za-z]")
 LAUNCHD_STDERR = "<key>StandardErrorPath</key>"
 
 
@@ -150,7 +150,16 @@ def _is_bare_english_arg(token: str) -> bool:
         return False
     if any(ch in token for ch in "/.=_:~{}[]()$*@"):
         return False
-    return bool(BARE_WORD_RE.fullmatch(token))
+    return bool(PROSE_BARE_WORD_RE.fullmatch(token))
+
+
+def _has_interior_sentence_terminal(text: str) -> bool:
+    """Return True for prose punctuation, not command path args.
+
+    The terminal must be attached to an alphabetic word and followed by another
+    word. A standalone dot path argument in `pytest . tests` is not prose.
+    """
+    return INTERIOR_SENTENCE_RE.search(text) is not None
 
 
 def is_prose_structured_command(line: str) -> bool:
@@ -158,15 +167,20 @@ def is_prose_structured_command(line: str) -> bool:
 
     A line is prose after prefix stripping and runner extraction when either:
     * it has >=2 additional bare lowercase-English words after the runner token;
-    * or it has an interior sentence terminal (. / ! / ?) followed by another word.
+    * or it has an interior sentence terminal (. / ! / ?) attached to a word and
+      followed by another word.
 
-    A trailing period alone is not prose. This keeps legitimate commands such as
-    `pytest .` and `pytest -q` documented while rejecting `pytest is our runner`.
+    Prose-structured lines are rejected regardless of fence context. Fenced
+    lines are still command candidates, but they pass through this same guard.
+    A trailing period alone, or a standalone `.` path arg, is not prose. This
+    keeps legitimate commands such as `pytest .` and `pytest -q` documented
+    while rejecting `pytest is our runner`.
     """
     stripped = strip_prefix(line).strip("` ")
-    interior_sentence = INTERIOR_SENTENCE_RE.search(stripped)
-    if interior_sentence is not None:
-        first_sentence = stripped[: interior_sentence.start() + 1].rstrip(".!?")
+    interior_sentence = _has_interior_sentence_terminal(stripped)
+    match = INTERIOR_SENTENCE_RE.search(stripped) if interior_sentence else None
+    if match is not None:
+        first_sentence = stripped[: match.start() + 1].rstrip(".!?")
         if runner_span(tokenize_command(first_sentence)) is not None:
             return True
     tokens = tokenize_command(stripped)
@@ -175,7 +189,7 @@ def is_prose_structured_command(line: str) -> bool:
         return False
     after = tokens[span[1]:]
     bare_words = [_tok for _tok in after if _is_bare_english_arg(_tok)]
-    return len(bare_words) >= 2 or interior_sentence is not None
+    return len(bare_words) >= 2 or interior_sentence
 
 
 def is_documented_test_command_line(line: str) -> bool:
@@ -195,8 +209,8 @@ def documented_test_command(readme: pathlib.Path) -> Optional[str]:
         if line.lstrip().startswith("```") or line.lstrip().startswith("~~~"):
             in_fence = not in_fence
             continue
-        # Fenced lines are candidates unless the prose guard rejects them; the
-        # same prose rule also applies outside fences to bullets and indents.
+        # Fenced lines are command candidates, qualified by the same prose guard
+        # used outside fences. Prose-structured text is rejected in both scopes.
         if is_documented_test_command_line(line):
             return strip_prefix(line).strip("` ")
     return None
@@ -313,6 +327,7 @@ def run_selfcheck() -> int:
             and documented_test_command(root / "documented" / "README.md") == "pytest ."
             and is_documented_test_command_line("pytest -q")
             and is_documented_test_command_line("pytest .")
+            and is_documented_test_command_line("pytest . tests")
             and is_prose_structured_command("pytest is our runner")
         )
     if ok:

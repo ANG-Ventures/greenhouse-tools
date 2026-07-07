@@ -96,6 +96,24 @@ def test_interior_sentence_terminal_is_prose_but_trailing_dot_alone_is_not():
     assert is_documented_test_command_line("pytest tests/ -v") is True
 
 
+def test_standalone_dot_path_arg_inside_command_is_not_sentence_terminal():
+    assert is_prose_structured_command("pytest . tests") is False
+    assert is_documented_test_command_line("pytest . tests") is True
+
+
+def test_python_m_pytest_prose_after_runner_is_hit(tmp_path):
+    repo = git_repo(tmp_path, "python-m-prose")
+    add_pytest_file(repo)
+    readme = write(repo / "README.md", "# x\n\n```\npython -m pytest is our runner\n```\n")
+
+    assert is_prose_structured_command("python -m pytest is our runner") is True
+    assert is_documented_test_command_line("python -m pytest is our runner") is False
+    assert documented_test_command(readme) is None
+    result = scan(tmp_path)
+    assert len(result.findings) == 1
+    assert pathlib.Path(result.findings[0].repo).name == "python-m-prose"
+
+
 # --------------------------------------------------------------------------- #
 # Repo/test detection and output.
 # --------------------------------------------------------------------------- #
