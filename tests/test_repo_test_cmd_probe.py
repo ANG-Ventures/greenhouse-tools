@@ -66,6 +66,16 @@ def test_fenced_pytest_q_is_documented(tmp_path):
     assert scan(tmp_path).findings == ()
 
 
+def test_fenced_npm_run_test_is_documented(tmp_path):
+    repo = git_repo(tmp_path, "documented-npm-run")
+    write(repo / "package.json", '{"scripts":{"test":"node test.js"}}\n')
+    readme = write(repo / "README.md", "# x\n\n```sh\nnpm run test\n```\n")
+
+    assert is_documented_test_command_line("npm run test") is True
+    assert documented_test_command(readme) == "npm run test"
+    assert scan(tmp_path).findings == ()
+
+
 def test_fenced_pytest_is_our_runner_is_prose_hit(tmp_path):
     repo = git_repo(tmp_path, "prose-fence")
     add_pytest_file(repo)
@@ -95,6 +105,14 @@ def test_basename_pattern_matches_in_subdir(tmp_path):
 
     reason = detect_test_suite(repo)
     assert reason == "python test file: pkg/unit/test_widget.py"
+
+
+def test_detection_order_is_deterministic(tmp_path):
+    repo = git_repo(tmp_path, "ordered")
+    write(repo / "z_pkg" / "test_z.py", "def test_z():\n    assert True\n")
+    write(repo / "a_pkg" / "test_a.py", "def test_a():\n    assert True\n")
+
+    assert detect_test_suite(repo) == "python test file: a_pkg/test_a.py"
 
 
 def test_scan_flags_repo_with_tests_and_missing_readme_command(tmp_path):

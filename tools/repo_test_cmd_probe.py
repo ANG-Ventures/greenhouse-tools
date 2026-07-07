@@ -15,7 +15,7 @@ import pathlib
 import re
 import sys
 import tempfile
-from typing import Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Iterator, List, Optional, Sequence, Tuple
 
 DEFAULT_TARGET = pathlib.Path(os.environ.get("GREENHOUSE_REPO_TARGET", ".")).expanduser()
 README_NAMES = ("README.md", "README.rst", "README.txt", "readme.md")
@@ -36,6 +36,7 @@ RUNNER_TOKENS = (
     ("pytest",),
     ("tox",),
     ("npm", "test"),
+    ("npm", "run", "test"),
     ("pnpm", "test"),
     ("yarn", "test"),
     ("cargo", "test"),
@@ -86,8 +87,9 @@ def _interesting_paths(repo: pathlib.Path) -> Iterator[pathlib.Path]:
     ignored = {".git", ".venv", "venv", "node_modules", "dist", "build", "__pycache__"}
     for dirpath, dirnames, filenames in os.walk(repo):
         dirnames[:] = [d for d in dirnames if d not in ignored and not d.startswith(".")]
+        dirnames.sort(key=str.lower)
         base = pathlib.Path(dirpath)
-        for name in filenames:
+        for name in sorted(filenames, key=str.lower):
             yield base / name
 
 
