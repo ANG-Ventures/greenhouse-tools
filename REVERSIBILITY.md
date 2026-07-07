@@ -406,3 +406,59 @@ This tool is reversible by construction.
     python -m tools.alias_expand --selfcheck                                        # deploy probe
     python -m tools.alias_expand --check-target --capabilities-dir /path/to/capabilities  # nightly gate
     python -m tools.alias_expand --capabilities-dir /path/to/capabilities           # emit expanded aliases
+
+
+---
+
+# repo-test-cmd-probe — Reversibility & Operations
+
+**Status:** v0.1, read-only nightly registry probe, **off by default.**
+
+## What it is
+
+A stdlib-only Python 3.11 tool that scans local git repo directories for repos
+that appear to ship tests but lack a README-documented one-command test path. It
+prints HIT records and unified-diff README patch drafts. It never edits a target
+repo; patch application is a later human/reviewer action.
+
+## Reversibility
+
+This tool is reversible by construction.
+
+- **Off by default.** Nothing runs on import. No cron, daemon, launchd job, or
+  scheduler entry is installed or enabled by this build. A human must invoke the
+  module or wire a nightly entry explicitly.
+- **State it touches: NONE.** The scanner reads local directories and README-like
+  files, then writes only stdout/stderr. It creates no DB, cache, dotfile, temp
+  state that survives a run, and no patch file. The `--selfcheck` fixture uses an
+  OS temp dir that is removed before exit.
+- **No network and no repo mutation.** It imports stdlib only and does not import
+  networking or subprocess modules in its production path. It never shells out to
+  git, package managers, or test runners. README fixes are emitted as draft
+  unified diffs only.
+- **Uninstall = delete files.** To roll back completely:
+  1. Remove the tool: `rm -f tools/repo_test_cmd_probe.py`.
+  2. Remove its tests: `rm -f tests/test_repo_test_cmd_probe.py`.
+  3. If you enabled a nightly job, remove that scheduler/cron/launchd entry and
+     its log files.
+  Nothing else was touched. There is no migration to undo and no remote change to
+  revert, because the tool never made one.
+
+## Health & liveness probes (NOT the same thing)
+
+- **`--selfcheck`** — offline deploy health probe. Builds its own temporary
+  three-repo fixture, proves a fenced `pytest .` and `pytest -q` are documented,
+  proves fenced `pytest is our runner` is a HIT, and exits `0` only when the
+  fixture classifies as expected. It reads no real target.
+- **`--check-target`** — real-target liveness gate. Asserts the configured
+  `--target` exists, is a directory, and contains at least one git repo. It exits
+  non-zero with `LIVENESS FAILURE` on missing/empty/wrong-kind targets, so a
+  nightly run cannot silently scan nothing.
+- **`--probe`** — prints launchd wiring requirements, including
+  `StandardErrorPath`, so stderr from the nightly entry is durable.
+
+## Usage
+
+    python -m tools.repo_test_cmd_probe --selfcheck
+    python -m tools.repo_test_cmd_probe --check-target --target /path/to/repos
+    python -m tools.repo_test_cmd_probe --target /path/to/repos --limit 25
