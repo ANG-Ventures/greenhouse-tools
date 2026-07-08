@@ -1,0 +1,25 @@
+{
+  "global_config": {
+    "context": {
+      "engine": "lcm"
+    }
+  },
+  "profiles": {
+    "apollo": {"context": {"engine": "lcm"}},
+    "aegis": {"context": {"engine": "lcm"}},
+    "argus": {"context": {"engine": "lcm"}},
+    "athena": {"context": {"engine": "lcm"}},
+    "daedalus": {"context": {"engine": "lcm"}},
+    "daedalus-opus": {"context": {"engine": "lcm"}},
+    "momus": {"context": {"engine": "lcm"}}
+  },
+  "running_gateways": [
+    "apollo",
+    "aegis",
+    "argus",
+    "athena",
+    "daedalus",
+    "daedalus-opus",
+    "momus"
+  ]
+}

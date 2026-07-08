@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """fleet_doc_audit -- bounded read-only drift audit for the fleet roster doc.
 
-Stdlib-only. ``--selfcheck`` is an offline deploy health probe over a synthetic
-fixture. ``--check-target`` is the live-doc liveness gate: it only asserts the
-real target has the expected locators and that the lcm prose has not re-grown a
-scope enumeration.
+Stdlib-only. The audit reports exactly the spec's bounded drift classes:
+R-LCM, R-LINK, R-STAMP, and the R-AEGIS locator guard. ``--selfcheck`` is
+an offline health probe over synthetic bytes. ``--check-target`` is only a
+liveness/locator gate; it deliberately does not run staleness oracles.
 """
 from __future__ import annotations
 
@@ -73,16 +73,17 @@ class AuditError(Exception):
 
 
 def identity_key(raw: str, namespace: str = "profile") -> str:
-    k = str(raw).strip().casefold()
-    k = IDENTITY_ALIASES.get(k, k)
+    key = str(raw).strip().casefold()
+    key = IDENTITY_ALIASES.get(key, key)
     if namespace == "gateway":
-        if k.startswith("gateway-"):
-            k = k[len("gateway-") :]
-        k = IDENTITY_ALIASES.get(k, k)
-    return k
+        if key.startswith("gateway-"):
+            key = key[len("gateway-") :]
+        key = IDENTITY_ALIASES.get(key, key)
+    return key
 
 
 def split_frontmatter(doc_bytes: bytes) -> tuple[bytes, bytes]:
+    """Return (frontmatter_bytes, body_bytes), with absent/malformed frontmatter total."""
     if not doc_bytes.startswith(b"---\n"):
         return b"", doc_bytes
     closing = doc_bytes.find(b"\n---\n", 4)
@@ -93,6 +94,7 @@ def split_frontmatter(doc_bytes: bytes) -> tuple[bytes, bytes]:
 
 
 def normalize_body(doc_bytes: bytes) -> bytes:
+    """Canonicalize the body bytes used by R-STAMP and --emit-stamp."""
     _frontmatter, body = split_frontmatter(doc_bytes)
     text = body.decode("utf-8", "strict").replace("\r\n", "\n").replace("\r", "\n")
     lines = [line.rstrip(" \t") for line in text.split("\n")]
@@ -110,13 +112,14 @@ def body_digest(doc_bytes: bytes) -> str:
 def frontmatter_value(doc_text: str, key: str) -> str | None:
     if not doc_text.startswith("---\n"):
         return None
-    end = doc_text.find("\n---\n", 4)
-    if end == -1:
+    closing = doc_text.find("\n---\n", 4)
+    if closing == -1:
         return None
-    frontmatter = doc_text[4:end]
-    pattern = re.compile(rf"^{re.escape(key)}:\s*(.+?)\s*$", re.MULTILINE)
-    match = pattern.search(frontmatter)
-    return match.group(1).strip().strip('"\'') if match else None
+    frontmatter = doc_text[4:closing]
+    match = re.search(rf"^{re.escape(key)}:\s*(.+?)\s*$", frontmatter, re.MULTILINE)
+    if not match:
+        return None
+    return match.group(1).strip().strip("\"'")
 
 
 def find_lcm_fence(doc_text: str) -> str | None:
@@ -125,22 +128,22 @@ def find_lcm_fence(doc_text: str) -> str | None:
 
 
 def parse_lcm_agents(fence_body: str) -> set[str]:
-    tokens = re.split(r"[,\n]", fence_body)
-    return {identity_key(token) for token in tokens if token.strip()}
+    return {identity_key(token) for token in re.split(r"[,\n]", fence_body) if token.strip()}
 
 
 def lcm_intro_text(doc_text: str) -> str | None:
-    fence_match = re.search(r"```lcm-agents\s*\n", doc_text)
-    if not fence_match:
+    fence_open = re.search(r"```lcm-agents\s*\n", doc_text)
+    if fence_open is None:
         return None
-    before = doc_text[: fence_match.start()]
-    marker = before.rfind("context.engine: lcm")
+    before_fence = doc_text[: fence_open.start()]
+    marker = before_fence.rfind("context.engine: lcm")
     if marker == -1:
         return None
-    return before[marker + len("context.engine: lcm") :]
+    return before_fence[marker + len("context.engine: lcm") :]
 
 
 def prose_scope_tokens(doc_text: str, known_identities: set[str] | None = None) -> set[str]:
+    """Find forbidden agent-name tokens in the prose that introduces the lcm fence."""
     intro = lcm_intro_text(doc_text)
     if intro is None:
         return set()
@@ -154,8 +157,8 @@ def prose_scope_tokens(doc_text: str, known_identities: set[str] | None = None) 
 
 
 def find_fleet_link(doc_text: str) -> str | None:
-    pattern = re.compile(r"(~?/[^\s`)]+" + re.escape(FLEET_LINK_BASENAME) + r")")
-    match = pattern.search(doc_text)
+    pathish = re.compile(r"(~?/[^\s`)]+" + re.escape(FLEET_LINK_BASENAME) + r")")
+    match = pathish.search(doc_text)
     if match:
         return match.group(1)
     if FLEET_LINK_BASENAME in doc_text:
@@ -176,9 +179,14 @@ def _engine_from(value: Any) -> str | None:
 
 
 def running_identities_join(live: dict[str, Any]) -> set[str]:
-    global_engine = _engine_from(live.get("global_config")) or _engine_from(live.get("global")) or live.get("engine")
-    if isinstance(global_engine, str):
-        global_engine = global_engine.strip().casefold()
+    """Return identities that effectively run lcm and have a running gateway."""
+    global_engine = (
+        _engine_from(live.get("global_config"))
+        or _engine_from(live.get("global"))
+        or _engine_from(live.get("config"))
+        or _engine_from(live.get("engine"))
+    )
+
     profiles_raw = live.get("profiles", {})
     profile_engines: dict[str, str | None] = {}
     if isinstance(profiles_raw, dict):
@@ -193,9 +201,9 @@ def running_identities_join(live: dict[str, Any]) -> set[str]:
 
     gateways_raw = live.get("running_gateways", live.get("gateways", []))
     if isinstance(gateways_raw, dict):
-        running = {identity_key(str(k), "gateway") for k, v in gateways_raw.items() if v}
+        running = {identity_key(str(name), "gateway") for name, enabled in gateways_raw.items() if enabled}
     else:
-        running = {identity_key(str(item), "gateway") for item in gateways_raw}
+        running = {identity_key(str(name), "gateway") for name in gateways_raw}
 
     effective_lcm: set[str] = set()
     for profile, engine in profile_engines.items():
@@ -210,6 +218,7 @@ def load_live_json(path: str | pathlib.Path) -> dict[str, Any]:
 
 
 def discover_live(home: pathlib.Path | None = None) -> dict[str, Any]:
+    """Best-effort local discovery used only when no explicit fixture is supplied."""
     root = home or pathlib.Path.home()
     profiles_dir = root / ".hermes" / "profiles"
     profiles: dict[str, dict[str, Any]] = {}
@@ -220,27 +229,43 @@ def discover_live(home: pathlib.Path | None = None) -> dict[str, Any]:
     global_engine = "lcm"
     config_path = root / ".hermes" / "config.yaml"
     try:
-        text = config_path.read_text(encoding="utf-8")
+        config_text = config_path.read_text(encoding="utf-8")
     except OSError:
-        text = ""
-    match = re.search(r"(?m)^\s*engine:\s*([A-Za-z0-9_-]+)\s*$", text)
+        config_text = ""
+    match = re.search(r"(?m)^\s*engine:\s*([A-Za-z0-9_-]+)\s*$", config_text)
     if match:
         global_engine = match.group(1).casefold()
-    return {"global_config": {"context": {"engine": global_engine}}, "profiles": profiles, "running_gateways": sorted(profiles)}
+    return {
+        "global_config": {"context": {"engine": global_engine}},
+        "profiles": profiles,
+        "running_gateways": sorted(profiles),
+    }
 
 
 def probe_rlcm(doc_text: str, live_set: set[str]) -> RuleResult:
     fence = find_lcm_fence(doc_text)
     if fence is None:
         return RuleResult("R-LCM", "LOCATOR_MISSING", "lcm-agents fence missing")
-    prose_tokens = prose_scope_tokens(doc_text, live_set | KNOWN_IDENTITIES | parse_lcm_agents(fence))
+    known = set(live_set) | KNOWN_IDENTITIES | parse_lcm_agents(fence)
+    prose_tokens = prose_scope_tokens(doc_text, known)
     if prose_tokens:
-        return RuleResult("R-LCM", "STALE", "lcm prose re-introduces scope enumeration", extra=frozenset(prose_tokens))
+        return RuleResult(
+            "R-LCM",
+            "STALE",
+            "lcm prose re-introduces scope enumeration",
+            extra=frozenset(prose_tokens),
+        )
     asserted = parse_lcm_agents(fence)
     missing = live_set - asserted
     extra = asserted - live_set
     if missing or extra:
-        return RuleResult("R-LCM", "STALE", "lcm scope set differs from live", frozenset(missing), frozenset(extra))
+        return RuleResult(
+            "R-LCM",
+            "STALE",
+            "lcm scope set differs from live",
+            missing=frozenset(missing),
+            extra=frozenset(extra),
+        )
     return RuleResult("R-LCM", "OK", "lcm scope matches live")
 
 
@@ -255,14 +280,13 @@ def probe_rlink(doc_text: str, exists: Callable[[str], bool] = os.path.exists) -
 
 
 def probe_stamp(doc_bytes: bytes) -> RuleResult:
-    text = doc_bytes.decode("utf-8", "strict")
-    if frontmatter_value(text, "last_verified") is None:
+    doc_text = doc_bytes.decode("utf-8", "strict")
+    if frontmatter_value(doc_text, "last_verified") is None:
         return RuleResult("R-STAMP", "LOCATOR_MISSING", "last_verified missing")
-    expected = frontmatter_value(text, "verified_body_sha256")
+    expected = frontmatter_value(doc_text, "verified_body_sha256")
     if expected is None:
         return RuleResult("R-STAMP", "WARN", "stamp digest not yet initialized — run --emit-stamp")
-    actual = body_digest(doc_bytes)
-    if actual != expected:
+    if body_digest(doc_bytes) != expected:
         return RuleResult("R-STAMP", "STALE", "body digest differs from verified_body_sha256")
     return RuleResult("R-STAMP", "OK", "body digest matches stamp")
 
@@ -276,52 +300,60 @@ def probe_aegis(doc_text: str) -> RuleResult:
 def audit_bytes(doc_bytes: bytes, live: dict[str, Any], exists: Callable[[str], bool] = os.path.exists) -> AuditResult:
     doc_text = doc_bytes.decode("utf-8", "strict")
     live_set = running_identities_join(live)
-    return AuditResult((
-        probe_rlcm(doc_text, live_set),
-        probe_rlink(doc_text, exists),
-        probe_stamp(doc_bytes),
-        probe_aegis(doc_text),
-    ))
+    return AuditResult(
+        (
+            probe_rlcm(doc_text, live_set),
+            probe_rlink(doc_text, exists),
+            probe_stamp(doc_bytes),
+            probe_aegis(doc_text),
+        )
+    )
 
 
 def check_target_bytes(doc_bytes: bytes) -> AuditResult:
     doc_text = doc_bytes.decode("utf-8", "strict")
     rows: list[RuleResult] = []
-    rows.append(RuleResult("R-LCM", "OK", "lcm-agents fence present") if find_lcm_fence(doc_text) is not None else RuleResult("R-LCM", "LOCATOR_MISSING", "lcm-agents fence missing"))
-    tokens = prose_scope_tokens(doc_text)
-    if tokens:
-        rows.append(RuleResult("R-LCM-PROSE", "STALE", "lcm prose re-introduces scope enumeration", extra=frozenset(tokens)))
-    rows.append(RuleResult("R-LINK", "OK", "fleet ownership spec link locator present") if find_fleet_link(doc_text) is not None else RuleResult("R-LINK", "LOCATOR_MISSING", "fleet ownership spec link missing"))
-    rows.append(RuleResult("R-STAMP", "OK", "last_verified present") if frontmatter_value(doc_text, "last_verified") is not None else RuleResult("R-STAMP", "LOCATOR_MISSING", "last_verified missing"))
+    fence = find_lcm_fence(doc_text)
+    if fence is None:
+        rows.append(RuleResult("R-LCM", "LOCATOR_MISSING", "lcm-agents fence missing"))
+    else:
+        rows.append(RuleResult("R-LCM", "OK", "lcm-agents fence present"))
+        tokens = prose_scope_tokens(doc_text, KNOWN_IDENTITIES | parse_lcm_agents(fence))
+        if tokens:
+            rows.append(
+                RuleResult(
+                    "R-LCM-PROSE",
+                    "STALE",
+                    "lcm prose re-introduces scope enumeration",
+                    extra=frozenset(tokens),
+                )
+            )
+    if find_fleet_link(doc_text) is None:
+        rows.append(RuleResult("R-LINK", "LOCATOR_MISSING", "fleet ownership spec link missing"))
+    else:
+        rows.append(RuleResult("R-LINK", "OK", "fleet ownership spec link locator present"))
+    if frontmatter_value(doc_text, "last_verified") is None:
+        rows.append(RuleResult("R-STAMP", "LOCATOR_MISSING", "last_verified missing"))
+    else:
+        rows.append(RuleResult("R-STAMP", "OK", "last_verified present"))
     rows.append(probe_aegis(doc_text))
     return AuditResult(tuple(rows))
 
 
 def read_target(path: str | pathlib.Path) -> bytes:
-    p = pathlib.Path(path).expanduser()
-    if not p.exists():
-        raise AuditError(f"LIVENESS FAILURE: target not found: {p}")
-    if not p.is_file():
-        raise AuditError(f"LIVENESS FAILURE: target is not a regular file: {p}")
-    data = p.read_bytes()
+    target = pathlib.Path(path).expanduser()
+    if not target.exists():
+        raise AuditError(f"LIVENESS FAILURE: target not found: {target}")
+    if not target.is_file():
+        raise AuditError(f"LIVENESS FAILURE: target is not a regular file: {target}")
+    data = target.read_bytes()
     if not data.strip():
-        raise AuditError(f"LIVENESS FAILURE: target is empty: {p}")
+        raise AuditError(f"LIVENESS FAILURE: target is empty: {target}")
     return data
 
 
 def emit_stamp(doc_bytes: bytes) -> str:
     return f"verified_body_sha256: {body_digest(doc_bytes)}\n"
-
-
-def selfcheck() -> bool:
-    live = fixture_live()
-    corrected = corrected_doc(with_digest=True)
-    stale = stale_doc()
-    return (
-        audit_bytes(corrected.encode("utf-8"), live, exists=lambda _p: True).exit_code == EXIT_OK
-        and audit_bytes(stale.encode("utf-8"), live, exists=lambda _p: False).exit_code == EXIT_DRIFT
-        and check_target_bytes(stale.encode("utf-8")).exit_code == EXIT_OK
-    )
 
 
 def fixture_live(keys: set[str] | None = None) -> dict[str, Any]:
@@ -352,16 +384,28 @@ def _doc(frontmatter: str, fence: str, link: str, body_extra: str = "") -> str:
 def corrected_doc(with_digest: bool = False) -> str:
     link = str(pathlib.Path.home() / ".hermes" / "plans" / "archive" / FLEET_LINK_BASENAME)
     frontmatter = "last_verified: 2026-07-08\n"
-    doc = _doc(frontmatter, ", ".join(sorted(KNOWN_IDENTITIES)), link)
+    fence = ", ".join(sorted(KNOWN_IDENTITIES))
+    doc = _doc(frontmatter, fence, link)
     if with_digest:
-        digest = body_digest(doc.encode("utf-8"))
-        doc = _doc(frontmatter + f"verified_body_sha256: {digest}\n", ", ".join(sorted(KNOWN_IDENTITIES)), link)
+        doc = _doc(frontmatter + f"verified_body_sha256: {body_digest(doc.encode('utf-8'))}\n", fence, link)
     return doc
 
 
 def stale_doc() -> str:
-    link = "~/.hermes/plans/2026-06-05_apollo-orchestrator-aegis-breakglass-spec.md"
-    return _doc("last_verified: 2026-07-05\n", "apollo, aegis", link)
+    dead_link = "~/.hermes/plans/2026-06-05_apollo-orchestrator-aegis-breakglass-spec.md"
+    return _doc("last_verified: 2026-07-05\n", "apollo, aegis", dead_link)
+
+
+def selfcheck() -> bool:
+    live = fixture_live()
+    corrected = corrected_doc(with_digest=True).encode("utf-8")
+    stale = stale_doc().encode("utf-8")
+    return (
+        audit_bytes(corrected, live, exists=lambda _path: True).exit_code == EXIT_OK
+        and audit_bytes(stale, live, exists=lambda _path: False).exit_code == EXIT_DRIFT
+        and check_target_bytes(stale).exit_code == EXIT_OK
+        and emit_stamp(corrected_doc().encode("utf-8")).startswith("verified_body_sha256: ")
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -370,7 +414,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--live-json", help="JSON file with profiles/gateways/config fixture or probe output")
     parser.add_argument("--emit-stamp", action="store_true", help="print verified_body_sha256 for target and exit")
     parser.add_argument("--selfcheck", action="store_true", help="offline deploy health probe over a synthetic fixture")
-    parser.add_argument("--check-target", action="store_true", help="assert real target exists/right-kind/non-empty and locators are present")
+    parser.add_argument("--check-target", action="store_true", help="assert target exists and locators are present")
     return parser
 
 
