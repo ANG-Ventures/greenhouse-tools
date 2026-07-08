@@ -462,3 +462,57 @@ This tool is reversible by construction.
     python -m tools.repo_test_cmd_probe --selfcheck
     python -m tools.repo_test_cmd_probe --check-target --target /path/to/repos
     python -m tools.repo_test_cmd_probe --target /path/to/repos --limit 25
+
+---
+
+# fleet-doc-audit — Reversibility & Operations
+
+**Status:** v0.1 read-only auditor, **off by default.**
+
+## What it is
+A stdlib-only Python 3.11 tool that reads the canonical fleet roster doc and
+reports the bounded drift facts from the approved spec: the `lcm-agents` scope
+fence vs live profile/gateway/config inputs, the fleet-ownership reference link,
+and the `last_verified` / `verified_body_sha256` body-stamp freshness contract.
+It never edits the Obsidian doc. `--emit-stamp` prints a digest line for a human
+to paste; it writes nothing.
+
+## Reversibility
+
+This tool is reversible by construction.
+
+- **Off by default.** Nothing runs on import. No cron, daemon, launchd job, or
+  scheduler entry is installed or enabled by this build. A human must invoke the
+  tool or wire a nightly entry explicitly.
+- **Read-only — touches no state.** The audit path, `--check-target`,
+  `--emit-stamp`, and `--selfcheck` only read files or synthetic in-memory
+  fixtures and print to stdout/stderr. There is no DB, cache, migration, network
+  call, subprocess, or persistent state.
+- **Doc prep remains human-owned.** The `verified_body_sha256` frontmatter line,
+  the `lcm-agents` fence, and the one-line prose de-scoping edit are not written
+  by this tool. Removing the digest degrades R-STAMP to WARN; removing the fence
+  makes R-LCM fail closed with LOCATOR_MISSING; reintroducing a prose scope list
+  is flagged loudly by the AC-19 guard.
+- **Uninstall / rollback = delete files.** To remove completely:
+  1. Remove the tool: `rm -f tools/fleet_doc_audit.py`.
+  2. Remove its tests: `rm -f tests/test_fleet_doc_audit.py`.
+  3. If you enabled a nightly job, remove that cron/scheduler entry.
+  Nothing else was touched. There is no migration to undo and no remote change
+  to revert.
+
+## Health & liveness probes (NOT the same thing)
+- **`--selfcheck`** — offline deploy health probe. Builds synthetic known-good
+  and stale fixtures, reads no real source, and exits `0` only if the core audit
+  behavior is internally consistent.
+- **`--check-target`** — real-target liveness gate. Asserts the actual
+  `Agents.md` exists, is a regular non-empty file, has the required locators
+  (including the `lcm-agents` fence), and has no reintroduced prose scope
+  enumeration. It intentionally does not run staleness oracles, so corrected
+  values never fail the liveness gate.
+
+## Usage
+
+    python -m tools.fleet_doc_audit --selfcheck
+    python -m tools.fleet_doc_audit --check-target "$HOME/Obsidian/Ace Place/AI/Agents.md"
+    python -m tools.fleet_doc_audit --emit-stamp "$HOME/Obsidian/Ace Place/AI/Agents.md"
+    python -m tools.fleet_doc_audit --live-json tests/fixtures/fixture_live.json "$HOME/Obsidian/Ace Place/AI/Agents.md"
