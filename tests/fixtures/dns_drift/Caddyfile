@@ -1,0 +1,6 @@
+ha.ace, portal.ace {
+  reverse_proxy 127.0.0.1:8123
+}
+skills.ace {
+  reverse_proxy 127.0.0.1:8080
+}

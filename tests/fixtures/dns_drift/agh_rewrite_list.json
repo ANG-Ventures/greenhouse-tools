@@ -1,0 +1,8 @@
+[
+  {"domain": "alpha.ace", "answer": "192.168.1.216", "enabled": true},
+  {"domain": "disabled.ace", "answer": "192.168.1.216", "enabled": false},
+  {"domain": "stray.ace", "answer": "192.168.1.216", "enabled": true},
+  {"domain": "deferred-live.ace", "answer": "192.168.1.4", "enabled": true},
+  {"domain": "outside.ace", "answer": "192.168.1.99", "enabled": true},
+  {"domain": "*.docs.ace", "answer": "192.168.1.216", "enabled": true}
+]
