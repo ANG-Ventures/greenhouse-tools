@@ -250,7 +250,7 @@ def test_structural_subprocess_call_site_is_agh_run_remote_only():
 
 
 def test_tool_imports_are_stdlib_or_repo_only():
-    allowed_external = {"argparse", "dataclasses", "json", "os", "pathlib", "re", "subprocess", "sys", "typing"}
+    allowed_external = {"__future__", "argparse", "dataclasses", "json", "os", "pathlib", "re", "subprocess", "sys", "typing"}
     for path in (ROOT / "tools" / "dns_drift").glob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
