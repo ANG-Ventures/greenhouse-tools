@@ -462,3 +462,59 @@ This tool is reversible by construction.
     python -m tools.repo_test_cmd_probe --selfcheck
     python -m tools.repo_test_cmd_probe --check-target --target /path/to/repos
     python -m tools.repo_test_cmd_probe --target /path/to/repos --limit 25
+
+
+---
+
+# dns-drift — Reversibility & Operations
+
+**Status:** v0.1, read-only reconciler, **off by default.**
+
+## What it is
+
+A stdlib-only Python 3.11 tool that compares declared `.ace` frontdoor names
+against AdGuard Home rewrite entries and reports MISSING, MISPOINTED, ORPHAN,
+`unknown_source`, `ambiguous`, and `unknown_shape` drift. It is a report-only
+nightly candidate and does not repair DNS or Caddy state.
+
+## Reversibility
+
+This tool is reversible by construction.
+
+- **Off by default.** Nothing runs on import. No cron, daemon, launchd job, or
+  scheduler entry is installed by this build. A human must invoke the module or
+  wire a nightly entry explicitly.
+- **State it touches: NONE.** It reads AGH/frontdoor sources and its committed
+  `tools/dns_drift/floor.json`, then writes only stdout/stderr. It keeps no DB,
+  cache, learned baseline, dotfile, or temp state that survives a run.
+- **Read-only remote path.** The only remote command is the AGH `rewrite/list`
+  GET through `tools.dns_drift.agh._run_remote()`. Tests assert that subprocess
+  use is structurally limited to that chokepoint and that the issued argv set is
+  exactly the allowlisted read command.
+- **Uninstall = delete files.** To roll back completely:
+  1. Remove the tool: `rm -rf tools/dns_drift/`.
+  2. Remove its tests and fixtures: `rm -f tests/test_dns_drift.py` and
+     `rm -rf tests/fixtures/dns_drift/`.
+  3. If you enabled a nightly job, remove that scheduler/cron/launchd entry and
+     its log files.
+  Nothing else was touched. There is no migration to undo and no remote/live
+  change to revert, because the tool never makes one.
+
+## Health & liveness probes (NOT the same thing)
+
+- **`--selfcheck`** — offline deploy health probe. Builds its own in-memory
+  fixture, proves classification/ranking/deterministic render behavior, and
+  exits `0` only when the logic is internally correct. It reads no real AGH,
+  ssh key, or frontdoor path.
+- **`--check-target`** — real-target liveness gate. It passes only when AGH is
+  reachable/above the floor and at least one declared source is readable and
+  non-empty. Deferred sources print a coverage note but do not fail the gate;
+  only total collapse exits `3` with `DNS_DRIFT_LIVENESS_FAIL:`.
+- **`--json`** — private machine surface. It includes internal `.ace` names and
+  LAN IP topology and must be routed only to a private sink.
+
+## Usage
+
+    python -m tools.dns_drift.drift --selfcheck
+    python -m tools.dns_drift.drift --check-target
+    python -m tools.dns_drift.drift --json
