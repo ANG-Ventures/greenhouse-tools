@@ -1,0 +1,8 @@
+{
+  "_doc": "review_coverage `by` values whose APPROVE at the exact head satisfies a required-closed PR or an edit of the gate lists (pipeline v2 SPEC D3). Read from the PR's BASE sha by hermes-home scripts/lib/merge_policy.py. On the always-review list: editing this file needs an operator APPROVE at head (rc 43). Seeded 2026-10-17 (card t_e64ffc11).",
+  "approvers": [
+    "apollo",
+    "apollo/operator",
+    "apollo/media-library"
+  ]
+}
