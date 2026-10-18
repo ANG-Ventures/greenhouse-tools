@@ -1,0 +1,9 @@
+# Always-review list (merge-gate profile v2, pipeline v2 SPEC D3). Seeded 2026-10-17 by card t_e64ffc11
+# (merge-path-simplify P1s: every lander repo carries both seed files before merge-gate-profile.json
+# `repos: "*"`). A PR touching a path here is required-closed: operator APPROVE at head
+# (config/operator-approvers.json) or a clean Prism verdict at head, never auto-armed. Read at the PR BASE
+# sha by hermes-home scripts/lib/merge_policy.py. GROW-ONLY. Globs: `**/` any segments, `*` one segment.
+# Set: CI workflows, git hooks, this repo's own deploy/install/release scripts, and the two gate lists.
+.github/**
+config/prism-always-review.txt
+config/operator-approvers.json
